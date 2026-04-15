@@ -11,10 +11,10 @@ import database
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-PUBLIC_CHANNEL_ID = os.getenv("PUBLIC_CHANNEL_ID")
-PUBLIC_CHANNEL_LINK = os.getenv("PUBLIC_CHANNEL_LINK", "https://t.me/")
-PUBLIC_GROUP_ID = os.getenv("PUBLIC_GROUP_ID")
-PUBLIC_GROUP_LINK = os.getenv("PUBLIC_GROUP_LINK", "https://t.me/")
+PUBLIC_CHANNEL_ID = os.getenv("PUBLIC_CHANNEL_ID", "@neetpgfmgemcqhourly")
+PUBLIC_CHANNEL_LINK = os.getenv("PUBLIC_CHANNEL_LINK", "https://t.me/neetpgfmgemcqhourly")
+PUBLIC_GROUP_ID = os.getenv("PUBLIC_GROUP_ID", "@neetpgpyqhourly")
+PUBLIC_GROUP_LINK = os.getenv("PUBLIC_GROUP_LINK", "https://t.me/neetpgpyqhourly")
 PRIVATE_CHANNEL_ID = os.getenv("PRIVATE_CHANNEL_ID")
 REQUIRED_REFERRALS = int(os.getenv("REQUIRED_REFERRALS", 10))
 
