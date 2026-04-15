@@ -1,0 +1,28 @@
+name: Deploy to Oracle VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 140.245.227.59
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd ~/telegrambot
+            git pull origin main
+            source venv/bin/activate
+            pip install -r requirements.txt
+            tmux kill-session -t mybot || true
+            tmux new-session -d -s mybot 'source venv/bin/activate && python3 bot.py'
