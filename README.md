@@ -44,8 +44,10 @@ Your bot needs permission to check who is subscribed, and to create invite links
 3. Open the `.env` file with any text editor (like Notepad).
 4. Fill in the details:
    - `BOT_TOKEN`: Paste the token you got from BotFather.
-   - `PUBLIC_CHANNEL_ID`: If your public channel has a link like `t.me/mychannel`, put `@mychannel`. (If it's private and has an ID like `-100123...`, put that).
-   - `PUBLIC_GROUP_ID`: Similar to the channel, put the username like `@mygroup` or the ID.
+   - `PUBLIC_CHANNEL_ID`: The ID or username of your public channel (e.g., `@mychannel` or `-100123...`). Used internally for verification.
+   - `PUBLIC_CHANNEL_LINK`: The public link to your channel (e.g., `https://t.me/mychannel`). Shown to users on the inline buttons.
+   - `PUBLIC_GROUP_ID`: The ID or username of your public group (e.g., `@mygroup` or `-100123...`). Used internally for verification.
+   - `PUBLIC_GROUP_LINK`: The public link to your group (e.g., `https://t.me/mygroup`). Shown to users on the inline buttons.
    - `PRIVATE_CHANNEL_ID`: This is usually a number starting with `-100`. To find this ID easily, you can use a bot like `@userinfobot` or forward a message from your private channel to `@RawDataBot`.
    - `REQUIRED_REFERRALS`: Leave this as `10` or change it if you want to require more/fewer referrals.
 5. Save the file.

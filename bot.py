@@ -12,7 +12,9 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PUBLIC_CHANNEL_ID = os.getenv("PUBLIC_CHANNEL_ID")
+PUBLIC_CHANNEL_LINK = os.getenv("PUBLIC_CHANNEL_LINK", "https://t.me/")
 PUBLIC_GROUP_ID = os.getenv("PUBLIC_GROUP_ID")
+PUBLIC_GROUP_LINK = os.getenv("PUBLIC_GROUP_LINK", "https://t.me/")
 PRIVATE_CHANNEL_ID = os.getenv("PRIVATE_CHANNEL_ID")
 REQUIRED_REFERRALS = int(os.getenv("REQUIRED_REFERRALS", 10))
 
@@ -43,6 +45,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def send_main_menu(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send the main menu with inline buttons."""
     keyboard = [
+        [
+            InlineKeyboardButton("📢 Join Channel", url=PUBLIC_CHANNEL_LINK),
+            InlineKeyboardButton("💬 Join Group", url=PUBLIC_GROUP_LINK)
+        ],
         [InlineKeyboardButton("✅ Verify Subscription", callback_data="verify")],
         [InlineKeyboardButton("👤 My Profile / Referrals", callback_data="profile")],
         [InlineKeyboardButton("🎁 Get Private Link", callback_data="get_link")]
@@ -53,8 +59,8 @@ async def send_main_menu(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> No
         chat_id=chat_id,
         text=(
             "Welcome! To gain access to our exclusive Private Channel, you need to:\n\n"
-            f"1. Subscribe to our Public Channel: {PUBLIC_CHANNEL_ID}\n"
-            f"2. Join our Public Group: {PUBLIC_GROUP_ID}\n"
+            "1. Subscribe to our Public Channel\n"
+            "2. Join our Public Group\n"
             f"3. Invite {REQUIRED_REFERRALS} friends using your referral link who also complete steps 1 & 2.\n\n"
             "Use the buttons below to navigate."
         ),
@@ -93,15 +99,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 text="✅ Subscription verified! You are now eligible to refer others. Click /start to return to the main menu."
             )
         else:
+            keyboard = [
+                [
+                    InlineKeyboardButton("📢 Join Channel", url=PUBLIC_CHANNEL_LINK),
+                    InlineKeyboardButton("💬 Join Group", url=PUBLIC_GROUP_LINK)
+                ],
+                [InlineKeyboardButton("✅ Try Verifying Again", callback_data="verify")],
+                [InlineKeyboardButton("🔙 Back to Menu", callback_data="start_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
             await query.edit_message_text(
                 text=(
                     "❌ Verification failed.\n\n"
-                    f"Please make sure you have joined both:\n"
-                    f"- Channel: {PUBLIC_CHANNEL_ID}\n"
-                    f"- Group: {PUBLIC_GROUP_ID}\n\n"
-                    "Then try verifying again. Click /start to return to the main menu."
-                )
+                    "Please make sure you have joined both our Public Channel and Public Group using the buttons below.\n\n"
+                    "Then try verifying again."
+                ),
+                reply_markup=reply_markup
             )
+
+    elif query.data == "start_menu":
+        # Delete the previous callback message and send the main menu
+        await query.message.delete()
+        await send_main_menu(user_id, context)
 
     elif query.data == "profile":
         # Get user stats
@@ -118,14 +138,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         await query.edit_message_text(
             text=(
-                "👤 **Your Profile**\n\n"
+                "👤 <b>Your Profile</b>\n\n"
                 f"Status: Subscribed? {is_verified_str}\n"
                 f"Successful Referrals: {successful_referrals} / {REQUIRED_REFERRALS}\n\n"
-                f"🔗 **Your Referral Link:**\n{referral_link}\n\n"
+                f"🔗 <b>Your Referral Link:</b>\n{referral_link}\n\n"
                 "(A referral is only counted as 'Successful' when the person you invite subscribes to both our public channel and group.)\n\n"
                 "Click /start to return to the main menu."
             ),
-            parse_mode='Markdown'
+            parse_mode='HTML'
         )
 
     elif query.data == "get_link":
