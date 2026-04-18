@@ -33,6 +33,7 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         [InlineKeyboardButton("Set Private Channel", callback_data="admin_set_private")],
         [InlineKeyboardButton("Set Referral Goal", callback_data="admin_set_goal")],
         [InlineKeyboardButton("Set Welcome Message", callback_data="admin_set_welcome")],
+        [InlineKeyboardButton("Test private link", callback_data="admin_test_link")],
         [InlineKeyboardButton("Close", callback_data="admin_close")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -107,10 +108,36 @@ async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("Set Private Channel", callback_data="admin_set_private")],
             [InlineKeyboardButton("Set Referral Goal", callback_data="admin_set_goal")],
             [InlineKeyboardButton("Set Welcome Message", callback_data="admin_set_welcome")],
+            [InlineKeyboardButton("Test private link", callback_data="admin_test_link")],
             [InlineKeyboardButton("Close", callback_data="admin_close")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text("Admin Panel:", reply_markup=reply_markup)
+        return ConversationHandler.END
+
+    elif query.data == "admin_test_link":
+        private_channel_id = database.get_config("PRIVATE_CHANNEL_ID")
+        if not private_channel_id:
+            await context.bot.send_message(chat_id=user_id, text="The private channel has not been configured yet. Please set it first.")
+            return ConversationHandler.END
+
+        try:
+            # Generate a single-use invite link for the private channel
+            invite_link = await context.bot.create_chat_invite_link(
+                chat_id=private_channel_id,
+                member_limit=1,
+                name="Admin Test Link"
+            )
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"Here is your test single-use link: {invite_link.invite_link}\n\n⚠️ Note: This link can only be used once."
+            )
+        except Exception as e:
+            logger.error(f"Error creating admin test invite link: {e}")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="An error occurred while generating the test invite link. Please make sure the bot is an Administrator in the Private Channel with permission to 'Invite Users'."
+            )
         return ConversationHandler.END
 
     elif query.data == "admin_close":
