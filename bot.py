@@ -79,27 +79,39 @@ async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return await admin_button_callback(update, context)
 
     elif query.data == "admin_add_chat":
-        await query.edit_message_text("Please send the chat ID (e.g., @mychannel or -100123456789) of the new required chat.")
+        keyboard = [[InlineKeyboardButton("Back", callback_data="admin_back")]]
+        await query.edit_message_text("Please send the chat ID (e.g., @mychannel or -100123456789) of the new required chat.", reply_markup=InlineKeyboardMarkup(keyboard))
         return WAITING_FOR_CHAT_ID
 
     elif query.data == "admin_set_private":
         current = database.get_config("PRIVATE_CHANNEL_ID", "Not set")
-        await query.edit_message_text(f"Current Private Channel ID: {current}\n\nPlease send the new Private Channel ID.")
+        keyboard = [[InlineKeyboardButton("Back", callback_data="admin_back")]]
+        await query.edit_message_text(f"Current Private Channel ID: {current}\n\nPlease send the new Private Channel ID.", reply_markup=InlineKeyboardMarkup(keyboard))
         return WAITING_FOR_PRIVATE_CHANNEL
 
     elif query.data == "admin_set_goal":
         current = database.get_config("REQUIRED_REFERRALS", "10")
-        await query.edit_message_text(f"Current Referral Goal: {current}\n\nPlease send the new referral goal (integer).")
+        keyboard = [[InlineKeyboardButton("Back", callback_data="admin_back")]]
+        await query.edit_message_text(f"Current Referral Goal: {current}\n\nPlease send the new referral goal (integer).", reply_markup=InlineKeyboardMarkup(keyboard))
         return WAITING_FOR_REFERRAL_GOAL
 
     elif query.data == "admin_set_welcome":
         current = database.get_config("WELCOME_MESSAGE", "Not set")
-        await query.edit_message_text(f"Current Welcome Message:\n\n{current}\n\nPlease send the new welcome message text. You can use {{required_referrals}} as a placeholder to automatically insert the current goal.")
+        keyboard = [[InlineKeyboardButton("Back", callback_data="admin_back")]]
+        await query.edit_message_text(f"Current Welcome Message:\n\n{current}\n\nPlease send the new welcome message text. You can use {{required_referrals}} as a placeholder to automatically insert the current goal.", reply_markup=InlineKeyboardMarkup(keyboard))
         return WAITING_FOR_WELCOME_MESSAGE
 
     elif query.data == "admin_back":
-        query.data = "admin_panel"
-        return await admin_start(update, context)
+        keyboard = [
+            [InlineKeyboardButton("Manage Required Chats", callback_data="admin_manage_chats")],
+            [InlineKeyboardButton("Set Private Channel", callback_data="admin_set_private")],
+            [InlineKeyboardButton("Set Referral Goal", callback_data="admin_set_goal")],
+            [InlineKeyboardButton("Set Welcome Message", callback_data="admin_set_welcome")],
+            [InlineKeyboardButton("Close", callback_data="admin_close")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text("Admin Panel:", reply_markup=reply_markup)
+        return ConversationHandler.END
 
     elif query.data == "admin_close":
         await query.edit_message_text("Admin panel closed.")
