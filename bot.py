@@ -205,20 +205,16 @@ async def send_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAU
     welcome_text = welcome_text.replace("{required_referrals}", str(required_referrals))
 
     keyboard = []
-    # Add a row with max 2 buttons, or one per row depending on how many
-    row = []
-    for chat in required_chats:
-        row.append(InlineKeyboardButton("📢 Join Channel", url=chat['link']))
-        if len(row) == 2:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
+    # Add one button per row with dynamic step numbers
+    for i, chat in enumerate(required_chats, start=1):
+        keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Join Channel {i}", url=chat['link'])])
+
+    verify_step = len(required_chats) + 1
 
     keyboard.extend([
-        [InlineKeyboardButton("✅ Verify Subscription", callback_data="verify")],
-        [InlineKeyboardButton("👤 My Profile / Referrals", callback_data="profile")],
-        [InlineKeyboardButton("🎁 Get Private Link", callback_data="get_link")]
+        [InlineKeyboardButton(f"✅ Step {verify_step}: Verify Subscription", callback_data="verify")],
+        [InlineKeyboardButton("👤 My Referrals", callback_data="profile")],
+        [InlineKeyboardButton("🎁 Get Private Channel Access", callback_data="get_link")]
     ])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -292,17 +288,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             required_chats = database.get_required_chats()
             keyboard = []
-            row = []
-            for chat in required_chats:
-                row.append(InlineKeyboardButton("📢 Join Channel", url=chat['link']))
-                if len(row) == 2:
-                    keyboard.append(row)
-                    row = []
-            if row:
-                keyboard.append(row)
+            for i, chat in enumerate(required_chats, start=1):
+                keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Join Channel {i}", url=chat['link'])])
+
+            verify_step = len(required_chats) + 1
 
             keyboard.extend([
-                [InlineKeyboardButton("✅ Try Verifying Again", callback_data="verify")],
+                [InlineKeyboardButton(f"✅ Step {verify_step}: Try Verifying Again", callback_data="verify")],
                 [InlineKeyboardButton("🔙 Back to Menu", callback_data="start_menu")]
             ])
             reply_markup = InlineKeyboardMarkup(keyboard)
