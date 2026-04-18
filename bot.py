@@ -21,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Conversation states for Admin panel
-WAITING_FOR_CHAT_ID, WAITING_FOR_CHAT_LINK, WAITING_FOR_PRIVATE_CHANNEL, WAITING_FOR_REFERRAL_GOAL = range(4)
+WAITING_FOR_CHAT_ID, WAITING_FOR_CHAT_LINK, WAITING_FOR_PRIVATE_CHANNEL, WAITING_FOR_REFERRAL_GOAL, WAITING_FOR_WELCOME_MESSAGE = range(5)
 
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Send the admin panel."""
@@ -32,6 +32,7 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         [InlineKeyboardButton("Manage Required Chats", callback_data="admin_manage_chats")],
         [InlineKeyboardButton("Set Private Channel", callback_data="admin_set_private")],
         [InlineKeyboardButton("Set Referral Goal", callback_data="admin_set_goal")],
+        [InlineKeyboardButton("Set Welcome Message", callback_data="admin_set_welcome")],
         [InlineKeyboardButton("Close", callback_data="admin_close")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -90,6 +91,11 @@ async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
         current = database.get_config("REQUIRED_REFERRALS", "10")
         await query.edit_message_text(f"Current Referral Goal: {current}\n\nPlease send the new referral goal (integer).")
         return WAITING_FOR_REFERRAL_GOAL
+
+    elif query.data == "admin_set_welcome":
+        current = database.get_config("WELCOME_MESSAGE", "Not set")
+        await query.edit_message_text(f"Current Welcome Message:\n\n{current}\n\nPlease send the new welcome message text. You can use {{required_referrals}} as a placeholder to automatically insert the current goal.")
+        return WAITING_FOR_WELCOME_MESSAGE
 
     elif query.data == "admin_back":
         query.data = "admin_panel"
@@ -152,9 +158,20 @@ async def admin_receive_referral_goal(update: Update, context: ContextTypes.DEFA
 
     return ConversationHandler.END
 
+async def admin_receive_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive welcome message from admin."""
+    if update.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+
+    text = update.message.text.strip()
+    database.set_config("WELCOME_MESSAGE", text)
+    await update.message.reply_text("Welcome message updated! Use /admin to return to the panel.")
+    return ConversationHandler.END
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
+    chat_id = update.effective_chat.id
 
     # Check if there is a referral argument (e.g. /start 123456789)
     args = context.args
@@ -168,41 +185,51 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Add user to database
     database.add_user(user.id, referred_by)
 
-    await send_main_menu(update.effective_chat.id, context)
+    # Delete previous main menu message if it exists
+    last_message_id = database.get_last_message_id(user.id)
+    if last_message_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=last_message_id)
+        except BadRequest:
+            pass # Message might already be deleted
 
-async def send_main_menu(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await send_main_menu(chat_id, user.id, context)
+
+async def send_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAULT_TYPE, query=None) -> None:
     """Send the main menu with inline buttons."""
     required_chats = database.get_required_chats()
     required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
+    welcome_text = database.get_config("WELCOME_MESSAGE", "Welcome! To gain access to our exclusive Private Channel, you need to:\n\n1. Subscribe to our required channels\n2. Invite {required_referrals} friends using your referral link who also complete step 1.\n\nUse the buttons below to navigate.")
+
+    # Replace dynamic placeholder if it exists in the text
+    welcome_text = welcome_text.replace("{required_referrals}", str(required_referrals))
 
     keyboard = []
-    # Add a row with max 2 buttons, or one per row depending on how many
-    row = []
-    for chat in required_chats:
-        row.append(InlineKeyboardButton("📢 Join Channel", url=chat['link']))
-        if len(row) == 2:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
+    # Add one button per row with dynamic step numbers
+    for i, chat in enumerate(required_chats, start=1):
+        keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Join Channel {i}", url=chat['link'])])
+
+    verify_step = len(required_chats) + 1
 
     keyboard.extend([
-        [InlineKeyboardButton("✅ Verify Subscription", callback_data="verify")],
-        [InlineKeyboardButton("👤 My Profile / Referrals", callback_data="profile")],
-        [InlineKeyboardButton("🎁 Get Private Link", callback_data="get_link")]
+        [InlineKeyboardButton(f"✅ Step {verify_step}: Verify Subscription", callback_data="verify")],
+        [InlineKeyboardButton("👤 My Referrals", callback_data="profile")],
+        [InlineKeyboardButton("🎁 Get Private Channel Access", callback_data="get_link")]
     ])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=(
-            "Welcome! To gain access to our exclusive Private Channel, you need to:\n\n"
-            "1. Subscribe to our required channels\n"
-            f"2. Invite {required_referrals} friends using your referral link who also complete step 1.\n\n"
-            "Use the buttons below to navigate."
-        ),
-        reply_markup=reply_markup,
-    )
+    if query:
+        await query.edit_message_text(
+            text=welcome_text,
+            reply_markup=reply_markup,
+        )
+    else:
+        sent_message = await context.bot.send_message(
+            chat_id=chat_id,
+            text=welcome_text,
+            reply_markup=reply_markup,
+        )
+        database.update_last_message_id(user_id, sent_message.message_id)
 
 async def check_subscription(bot, user_id, chat_id) -> bool:
     """Check if a user is a member of a specific chat."""
@@ -261,17 +288,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             required_chats = database.get_required_chats()
             keyboard = []
-            row = []
-            for chat in required_chats:
-                row.append(InlineKeyboardButton("📢 Join Channel", url=chat['link']))
-                if len(row) == 2:
-                    keyboard.append(row)
-                    row = []
-            if row:
-                keyboard.append(row)
+            for i, chat in enumerate(required_chats, start=1):
+                keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Join Channel {i}", url=chat['link'])])
+
+            verify_step = len(required_chats) + 1
 
             keyboard.extend([
-                [InlineKeyboardButton("✅ Try Verifying Again", callback_data="verify")],
+                [InlineKeyboardButton(f"✅ Step {verify_step}: Try Verifying Again", callback_data="verify")],
                 [InlineKeyboardButton("🔙 Back to Menu", callback_data="start_menu")]
             ])
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -286,9 +309,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
 
     elif query.data == "start_menu":
-        # Delete the previous callback message and send the main menu
-        await query.message.delete()
-        await send_main_menu(user_id, context)
+        # Edit the previous callback message to show the main menu
+        await send_main_menu(query.message.chat_id, user_id, context, query=query)
 
     elif query.data == "profile":
         # Get user stats
@@ -400,6 +422,7 @@ def main() -> None:
             WAITING_FOR_CHAT_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_chat_link)],
             WAITING_FOR_PRIVATE_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_private_channel)],
             WAITING_FOR_REFERRAL_GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_referral_goal)],
+            WAITING_FOR_WELCOME_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_welcome_message)],
         },
         fallbacks=[
             CommandHandler("admin", admin_start),
