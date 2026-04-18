@@ -282,8 +282,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # Mark user as verified in DB
             if not user_data['is_verified']:
                 database.mark_verified(user_id)
+
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
             await query.edit_message_text(
-                text="✅ Subscription verified! You are now eligible to refer others. Click /start to return to the main menu."
+                text="✅ Subscription verified! You are now eligible to refer others.",
+                reply_markup=reply_markup
             )
         else:
             required_chats = database.get_required_chats()
@@ -326,27 +331,34 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         successful_referrals = database.get_successful_referrals_count(user_id)
         required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
 
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
         await query.edit_message_text(
             text=(
                 "👤 <b>Your Profile</b>\n\n"
                 f"Status: Subscribed? {is_verified_str}\n"
                 f"Successful Referrals: {successful_referrals} / {required_referrals}\n\n"
                 f"🔗 <b>Your Referral Link:</b>\n{referral_link}\n\n"
-                "(A referral is only counted as 'Successful' when the person you invite subscribes to the required channels.)\n\n"
-                "Click /start to return to the main menu."
+                "(A referral is only counted as 'Successful' when the person you invite subscribes to the required channels.)"
             ),
-            parse_mode='HTML'
+            parse_mode='HTML',
+            reply_markup=reply_markup
         )
 
     elif query.data == "get_link":
         user_data = database.get_user(user_id)
+
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
         if user_data and user_data.get('has_claimed_reward'):
             await query.edit_message_text(
                 text=(
                     "❌ You have already claimed your reward and received a link.\n\n"
-                    "If you lost your link or it expired, please contact the administrators.\n\n"
-                    "Click /start to return to the main menu."
-                )
+                    "If you lost your link or it expired, please contact the administrators."
+                ),
+                reply_markup=reply_markup
             )
             return
 
@@ -359,7 +371,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 private_channel_id = database.get_config("PRIVATE_CHANNEL_ID")
                 if not private_channel_id:
                     await query.edit_message_text(
-                        text="The private channel has not been configured yet. Please contact an administrator."
+                        text="The private channel has not been configured yet. Please contact an administrator.",
+                        reply_markup=reply_markup
                     )
                     return
 
@@ -378,7 +391,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         "🎉 Congratulations! You have reached the required number of referrals.\n\n"
                         f"Here is your exclusive link to the Private Channel: {invite_link.invite_link}\n\n"
                         "⚠️ Note: This link can only be used once. Do not share it with anyone else!"
-                    )
+                    ),
+                    reply_markup=reply_markup
                 )
             except Exception as e:
                 logger.error(f"Error creating invite link: {e}")
@@ -386,17 +400,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     text=(
                         "An error occurred while generating your invite link. "
                         "Please make sure the bot is an Administrator in the Private Channel with permission to 'Invite Users'."
-                        "\n\nClick /start to return to the main menu."
-                    )
+                    ),
+                    reply_markup=reply_markup
                 )
         else:
             await query.edit_message_text(
                 text=(
                     f"You need {required_referrals} successful referrals to get the private link.\n"
                     f"You currently have {successful_referrals}.\n\n"
-                    "Share your referral link from 'My Profile' to invite more people!\n\n"
-                    "Click /start to return to the main menu."
-                )
+                    "Share your referral link from 'My Profile' to invite more people!"
+                ),
+                reply_markup=reply_markup
             )
 
 def main() -> None:
