@@ -14,14 +14,22 @@ def init_db():
     # referred_by: Telegram ID of the person who invited them (NULL if none)
     # is_verified: 1 if they have subscribed to both channel and group, 0 otherwise
     # has_claimed_reward: 1 if they have already generated their private link
+    # last_message_id: Stores the ID of the last menu message sent to the user
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             telegram_id INTEGER PRIMARY KEY,
             referred_by INTEGER,
             is_verified INTEGER DEFAULT 0,
-            has_claimed_reward INTEGER DEFAULT 0
+            has_claimed_reward INTEGER DEFAULT 0,
+            last_message_id INTEGER DEFAULT NULL
         )
     ''')
+
+    # Add last_message_id to existing users table if it doesn't exist
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN last_message_id INTEGER DEFAULT NULL')
+    except sqlite3.OperationalError:
+        pass # Column already exists
 
     # Create config table
     cursor.execute('''
@@ -57,9 +65,18 @@ def init_db():
     if cursor.fetchone()[0] == 0:
         private_channel_id = os.getenv("PRIVATE_CHANNEL_ID", "")
         required_referrals = os.getenv("REQUIRED_REFERRALS", "10")
+        welcome_message = os.getenv("WELCOME_MESSAGE", "Welcome! To gain access to our exclusive Private Channel, you need to:\n\n1. Subscribe to our required channels\n2. Invite {required_referrals} friends using your referral link who also complete step 1.\n\nUse the buttons below to navigate.")
         cursor.execute('INSERT INTO config (key, value) VALUES (?, ?)', ("PRIVATE_CHANNEL_ID", private_channel_id))
         cursor.execute('INSERT INTO config (key, value) VALUES (?, ?)', ("REQUIRED_REFERRALS", required_referrals))
+        cursor.execute('INSERT INTO config (key, value) VALUES (?, ?)', ("WELCOME_MESSAGE", welcome_message))
         conn.commit()
+    else:
+        # Check if WELCOME_MESSAGE exists, if not insert default
+        cursor.execute('SELECT COUNT(*) FROM config WHERE key = ?', ("WELCOME_MESSAGE",))
+        if cursor.fetchone()[0] == 0:
+            welcome_message = os.getenv("WELCOME_MESSAGE", "Welcome! To gain access to our exclusive Private Channel, you need to:\n\n1. Subscribe to our required channels\n2. Invite {required_referrals} friends using your referral link who also complete step 1.\n\nUse the buttons below to navigate.")
+            cursor.execute('INSERT INTO config (key, value) VALUES (?, ?)', ("WELCOME_MESSAGE", welcome_message))
+            conn.commit()
 
     cursor.execute('SELECT COUNT(*) FROM required_chats')
     if cursor.fetchone()[0] == 0:
@@ -93,7 +110,7 @@ def get_user(telegram_id: int):
     """Get user data."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('SELECT telegram_id, referred_by, is_verified, has_claimed_reward FROM users WHERE telegram_id = ?', (telegram_id,))
+    cursor.execute('SELECT telegram_id, referred_by, is_verified, has_claimed_reward, last_message_id FROM users WHERE telegram_id = ?', (telegram_id,))
     user = cursor.fetchone()
     conn.close()
 
@@ -102,9 +119,27 @@ def get_user(telegram_id: int):
             'telegram_id': user[0],
             'referred_by': user[1],
             'is_verified': bool(user[2]),
-            'has_claimed_reward': bool(user[3])
+            'has_claimed_reward': bool(user[3]),
+            'last_message_id': user[4]
         }
     return None
+
+def update_last_message_id(telegram_id: int, message_id: int):
+    """Update the last message ID sent to the user."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE users SET last_message_id = ? WHERE telegram_id = ?', (message_id, telegram_id))
+    conn.commit()
+    conn.close()
+
+def get_last_message_id(telegram_id: int):
+    """Get the last message ID sent to the user."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT last_message_id FROM users WHERE telegram_id = ?', (telegram_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else None
 
 def mark_verified(telegram_id: int):
     """Mark a user as verified (subscribed to both public channel and group)."""
