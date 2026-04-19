@@ -345,9 +345,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
                 shareable_text = (
-                    "🎁 Get <b>CoreBTR videos</b> completely free of cost!\n\n"
-                    f"👉 <a href='{referral_link}'>Click Here to Get Access</a>\n\n"
-                    "📺 Check out our Demo Channel: @DemoChannel"
+                    "🎁 Get Complete CoreBTR videos and Pdfs absolutely free of cost by simply joining the link below.....\n\n"
+                    f"👉 Click here to get the videos: {referral_link}\n\n"
+                    "📺 Check Demo CoreBTR videos: https://t.me/+WouYXoiPIcE3ZTFl"
                 )
 
                 instructions_text = (
