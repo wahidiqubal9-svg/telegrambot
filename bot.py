@@ -2,7 +2,7 @@ import logging
 import os
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters, ChatJoinRequestHandler
 from telegram.error import BadRequest
 
 import database
@@ -21,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Conversation states for Admin panel
-WAITING_FOR_CHAT_ID, WAITING_FOR_CHAT_LINK, WAITING_FOR_PRIVATE_CHANNEL, WAITING_FOR_REFERRAL_GOAL, WAITING_FOR_WELCOME_MESSAGE = range(5)
+WAITING_FOR_CHAT_ID, WAITING_FOR_CHAT_LINK, WAITING_FOR_PRIVATE_CHANNEL, WAITING_FOR_PRIVATE_CHANNEL_LINK, WAITING_FOR_REFERRAL_GOAL, WAITING_FOR_WELCOME_MESSAGE = range(6)
 
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Send the admin panel."""
@@ -30,7 +30,8 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     keyboard = [
         [InlineKeyboardButton("Manage Required Chats", callback_data="admin_manage_chats")],
-        [InlineKeyboardButton("Set Private Channel", callback_data="admin_set_private")],
+        [InlineKeyboardButton("Set Private Channel ID", callback_data="admin_set_private")],
+        [InlineKeyboardButton("Set Private Join Link", callback_data="admin_set_private_link")],
         [InlineKeyboardButton("Set Referral Goal", callback_data="admin_set_goal")],
         [InlineKeyboardButton("Set Welcome Message", callback_data="admin_set_welcome")],
         [InlineKeyboardButton("Test private link", callback_data="admin_test_link")],
@@ -90,6 +91,12 @@ async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(f"Current Private Channel ID: {current}\n\nPlease send the new Private Channel ID.", reply_markup=InlineKeyboardMarkup(keyboard))
         return WAITING_FOR_PRIVATE_CHANNEL
 
+    elif query.data == "admin_set_private_link":
+        current = database.get_config("PRIVATE_JOIN_LINK", "Not set")
+        keyboard = [[InlineKeyboardButton("Back", callback_data="admin_back")]]
+        await query.edit_message_text(f"Current Private Join Link (Join Request Link): {current}\n\nPlease send the new permanent join request link for the private channel.", reply_markup=InlineKeyboardMarkup(keyboard))
+        return WAITING_FOR_PRIVATE_CHANNEL_LINK
+
     elif query.data == "admin_set_goal":
         current = database.get_config("REQUIRED_REFERRALS", "10")
         keyboard = [[InlineKeyboardButton("Back", callback_data="admin_back")]]
@@ -105,7 +112,8 @@ async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif query.data == "admin_back":
         keyboard = [
             [InlineKeyboardButton("Manage Required Chats", callback_data="admin_manage_chats")],
-            [InlineKeyboardButton("Set Private Channel", callback_data="admin_set_private")],
+            [InlineKeyboardButton("Set Private Channel ID", callback_data="admin_set_private")],
+            [InlineKeyboardButton("Set Private Join Link", callback_data="admin_set_private_link")],
             [InlineKeyboardButton("Set Referral Goal", callback_data="admin_set_goal")],
             [InlineKeyboardButton("Set Welcome Message", callback_data="admin_set_welcome")],
             [InlineKeyboardButton("Test private link", callback_data="admin_test_link")],
@@ -181,6 +189,16 @@ async def admin_receive_private_channel(update: Update, context: ContextTypes.DE
     await update.message.reply_text(f"Private Channel ID updated to {chat_id}. Use /admin to return to the panel.")
     return ConversationHandler.END
 
+async def admin_receive_private_channel_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive private channel join request link from admin."""
+    if update.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+
+    link = update.message.text.strip()
+    database.set_config("PRIVATE_JOIN_LINK", link)
+    await update.message.reply_text(f"Private Join Link updated successfully. Use /admin to return to the panel.")
+    return ConversationHandler.END
+
 async def admin_receive_referral_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Receive referral goal from admin."""
     if update.effective_user.id != ADMIN_ID:
@@ -246,14 +264,14 @@ async def send_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAU
     keyboard = []
     # Add one button per row with dynamic step numbers
     for i, chat in enumerate(required_chats, start=1):
-        keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Join Channel {i}", url=chat['link'])])
+        keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Subscribe Channel {i}", url=chat['link'])])
 
     verify_step = len(required_chats) + 1
 
     keyboard.extend([
-        [InlineKeyboardButton(f"✅ Step {verify_step}: Verify Subscription", callback_data="verify")],
-        [InlineKeyboardButton("👤 My Referrals", callback_data="profile")],
-        [InlineKeyboardButton("🎁 Get Private Channel Access", callback_data="get_link")]
+        [InlineKeyboardButton(f"🔗 Step {verify_step}: Get your refer link", callback_data="get_refer_link")],
+        [InlineKeyboardButton("👤 Check your referrals", callback_data="profile")],
+        [InlineKeyboardButton("🎁 Get CoreBTR videos", callback_data="get_link")]
     ])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -290,7 +308,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     user_id = query.from_user.id
 
-    if query.data == "verify":
+    if query.data == "verify" or query.data == "get_refer_link":
         user_data = database.get_user(user_id)
         if not user_data:
             database.add_user(user_id)
@@ -322,23 +340,59 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if not user_data['is_verified']:
                 database.mark_verified(user_id)
 
-            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+            if query.data == "get_refer_link":
+                bot_username = context.bot.username
+                referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
-            await query.edit_message_text(
-                text="✅ Subscription verified! You are now eligible to refer others.",
-                reply_markup=reply_markup
-            )
+                shareable_text = (
+                    "🎁 Get <b>CoreBTR videos</b> completely free of cost!\n\n"
+                    f"👉 <a href='{referral_link}'>Click Here to Get Access</a>\n\n"
+                    "📺 Check out our Demo Channel: @DemoChannel"
+                )
+
+                instructions_text = (
+                    "⬆️ Forward the message above to your friends to invite them! "
+                    "Once they subscribe to the required channels, it will count as a successful referral."
+                )
+
+                # Send the two separate messages
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=shareable_text,
+                    parse_mode='HTML'
+                )
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=instructions_text,
+                    parse_mode='HTML'
+                )
+
+                # Keep the main menu exactly as it is, or show a brief success message
+                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await query.edit_message_text(
+                    text="✅ Your referral link has been sent below! 👇",
+                    reply_markup=reply_markup
+                )
+            else:
+                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await query.edit_message_text(
+                    text="✅ Subscription verified! You are now eligible to refer others.",
+                    reply_markup=reply_markup
+                )
         else:
             required_chats = database.get_required_chats()
             keyboard = []
             for i, chat in enumerate(required_chats, start=1):
-                keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Join Channel {i}", url=chat['link'])])
+                keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Subscribe Channel {i}", url=chat['link'])])
 
             verify_step = len(required_chats) + 1
 
             keyboard.extend([
-                [InlineKeyboardButton(f"✅ Step {verify_step}: Try Verifying Again", callback_data="verify")],
+                [InlineKeyboardButton(f"🔗 Step {verify_step}: Get your refer link", callback_data="get_refer_link")],
                 [InlineKeyboardButton("🔙 Back to Menu", callback_data="start_menu")]
             ])
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -346,8 +400,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text(
                 text=(
                     "❌ Verification failed.\n\n"
-                    "Please make sure you have joined all our required channels using the buttons below.\n\n"
-                    "Then try verifying again."
+                    "Please make sure you have joined all our required channels first."
                 ),
                 reply_markup=reply_markup
             )
@@ -366,7 +419,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             database.add_user(user_id)
             user_data = database.get_user(user_id)
 
-        is_verified_str = "✅ Yes" if user_data['is_verified'] else "❌ No (Please click 'Verify Subscription')"
+        is_verified_str = "✅ Yes" if user_data['is_verified'] else "❌ No (Please click 'Get your refer link' to verify)"
         successful_referrals = database.get_successful_referrals_count(user_id)
         required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
 
@@ -375,7 +428,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         await query.edit_message_text(
             text=(
-                "👤 <b>Your Profile</b>\n\n"
+                "👤 <b>Your Referrals</b>\n\n"
                 f"Status: Subscribed? {is_verified_str}\n"
                 f"Successful Referrals: {successful_referrals} / {required_referrals}\n\n"
                 f"🔗 <b>Your Referral Link:</b>\n{referral_link}\n\n"
@@ -408,19 +461,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if successful_referrals >= required_referrals:
             try:
                 private_channel_id = database.get_config("PRIVATE_CHANNEL_ID")
-                if not private_channel_id:
+                private_join_link = database.get_config("PRIVATE_JOIN_LINK")
+
+                if not private_channel_id or not private_join_link:
                     await query.edit_message_text(
-                        text="The private channel has not been configured yet. Please contact an administrator.",
+                        text="The private channel or join link has not been fully configured yet. Please contact an administrator.",
                         reply_markup=reply_markup
                     )
                     return
-
-                # Generate a single-use invite link for the private channel
-                invite_link = await context.bot.create_chat_invite_link(
-                    chat_id=private_channel_id,
-                    member_limit=1,
-                    name=f"Invite for {user_id}"
-                )
 
                 # Mark reward as claimed in the database
                 database.mark_reward_claimed(user_id)
@@ -428,29 +476,61 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 await query.edit_message_text(
                     text=(
                         "🎉 Congratulations! You have reached the required number of referrals.\n\n"
-                        f"Here is your exclusive link to the Private Channel: {invite_link.invite_link}\n\n"
-                        "⚠️ Note: This link can only be used once. Do not share it with anyone else!"
+                        f"Here is your exclusive link to access CoreBTR videos: {private_join_link}\n\n"
+                        "⚠️ Note: Please click the link to 'Request to Join'. The bot will automatically approve your request!"
                     ),
                     reply_markup=reply_markup
                 )
             except Exception as e:
-                logger.error(f"Error creating invite link: {e}")
+                logger.error(f"Error giving invite link: {e}")
                 await query.edit_message_text(
-                    text=(
-                        "An error occurred while generating your invite link. "
-                        "Please make sure the bot is an Administrator in the Private Channel with permission to 'Invite Users'."
-                    ),
+                    text="An error occurred while fetching your invite link.",
                     reply_markup=reply_markup
                 )
         else:
             await query.edit_message_text(
                 text=(
-                    f"You need {required_referrals} successful referrals to get the private link.\n"
+                    f"You need {required_referrals} successful referrals to get access to CoreBTR videos.\n"
                     f"You currently have {successful_referrals}.\n\n"
-                    "Share your referral link from 'My Profile' to invite more people!"
+                    "Share your referral link from 'Check your referrals' to invite more people!"
                 ),
                 reply_markup=reply_markup
             )
+
+async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles chat join requests and approves eligible users."""
+    request = update.chat_join_request
+    user_id = request.from_user.id
+    chat_id = str(request.chat.id)
+
+    private_channel_id = database.get_config("PRIVATE_CHANNEL_ID")
+
+    # Check if the join request is for the configured private channel
+    # Note: Sometimes chat.id is an integer, so we compare strings to be safe
+    if private_channel_id and str(private_channel_id) == chat_id:
+        successful_referrals = database.get_successful_referrals_count(user_id)
+        required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
+
+        if successful_referrals >= required_referrals:
+            try:
+                await request.approve()
+                logger.info(f"Approved join request for eligible user {user_id}")
+            except Exception as e:
+                logger.error(f"Failed to approve join request for {user_id}: {e}")
+        else:
+            try:
+                await request.decline()
+                logger.info(f"Declined join request for ineligible user {user_id}")
+                # Optionally, notify the user why they were declined
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"❌ Your request to join CoreBTR videos was declined because you have not reached the required {required_referrals} referrals."
+                    )
+                except Exception:
+                    pass # User might have blocked the bot
+            except Exception as e:
+                logger.error(f"Failed to decline join request for {user_id}: {e}")
 
 def main() -> None:
     """Start the bot."""
@@ -474,6 +554,7 @@ def main() -> None:
             WAITING_FOR_CHAT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_chat_id)],
             WAITING_FOR_CHAT_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_chat_link)],
             WAITING_FOR_PRIVATE_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_private_channel)],
+            WAITING_FOR_PRIVATE_CHANNEL_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_private_channel_link)],
             WAITING_FOR_REFERRAL_GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_referral_goal)],
             WAITING_FOR_WELCOME_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_welcome_message)],
         },
@@ -488,6 +569,9 @@ def main() -> None:
     # on different commands - answer in Telegram
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_callback))
+
+    # Handle chat join requests
+    application.add_handler(ChatJoinRequestHandler(handle_join_request))
 
     # Run the bot until the user presses Ctrl-C
     logger.info("Bot is starting...")
