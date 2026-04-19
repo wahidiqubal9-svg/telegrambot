@@ -246,14 +246,14 @@ async def send_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAU
     keyboard = []
     # Add one button per row with dynamic step numbers
     for i, chat in enumerate(required_chats, start=1):
-        keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Join Channel {i}", url=chat['link'])])
+        keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Subscribe Channel {i}", url=chat['link'])])
 
     verify_step = len(required_chats) + 1
 
     keyboard.extend([
-        [InlineKeyboardButton(f"✅ Step {verify_step}: Verify Subscription", callback_data="verify")],
-        [InlineKeyboardButton("👤 My Referrals", callback_data="profile")],
-        [InlineKeyboardButton("🎁 Get Private Channel Access", callback_data="get_link")]
+        [InlineKeyboardButton(f"🔗 Step {verify_step}: Get your refer link", callback_data="get_refer_link")],
+        [InlineKeyboardButton("👤 Check your referrals", callback_data="profile")],
+        [InlineKeyboardButton("🎁 Get CoreBTR videos", callback_data="get_link")]
     ])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -290,7 +290,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     user_id = query.from_user.id
 
-    if query.data == "verify":
+    if query.data == "verify" or query.data == "get_refer_link":
         user_data = database.get_user(user_id)
         if not user_data:
             database.add_user(user_id)
@@ -322,23 +322,59 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if not user_data['is_verified']:
                 database.mark_verified(user_id)
 
-            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+            if query.data == "get_refer_link":
+                bot_username = context.bot.username
+                referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
-            await query.edit_message_text(
-                text="✅ Subscription verified! You are now eligible to refer others.",
-                reply_markup=reply_markup
-            )
+                shareable_text = (
+                    "🎁 Get <b>CoreBTR videos</b> completely free of cost!\n\n"
+                    f"👉 <a href='{referral_link}'>Click Here to Get Access</a>\n\n"
+                    "📺 Check out our Demo Channel: @DemoChannel"
+                )
+
+                instructions_text = (
+                    "⬆️ Forward the message above to your friends to invite them! "
+                    "Once they subscribe to the required channels, it will count as a successful referral."
+                )
+
+                # Send the two separate messages
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=shareable_text,
+                    parse_mode='HTML'
+                )
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=instructions_text,
+                    parse_mode='HTML'
+                )
+
+                # Keep the main menu exactly as it is, or show a brief success message
+                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await query.edit_message_text(
+                    text="✅ Your referral link has been sent below! 👇",
+                    reply_markup=reply_markup
+                )
+            else:
+                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await query.edit_message_text(
+                    text="✅ Subscription verified! You are now eligible to refer others.",
+                    reply_markup=reply_markup
+                )
         else:
             required_chats = database.get_required_chats()
             keyboard = []
             for i, chat in enumerate(required_chats, start=1):
-                keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Join Channel {i}", url=chat['link'])])
+                keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Subscribe Channel {i}", url=chat['link'])])
 
             verify_step = len(required_chats) + 1
 
             keyboard.extend([
-                [InlineKeyboardButton(f"✅ Step {verify_step}: Try Verifying Again", callback_data="verify")],
+                [InlineKeyboardButton(f"🔗 Step {verify_step}: Get your refer link", callback_data="get_refer_link")],
                 [InlineKeyboardButton("🔙 Back to Menu", callback_data="start_menu")]
             ])
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -346,8 +382,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text(
                 text=(
                     "❌ Verification failed.\n\n"
-                    "Please make sure you have joined all our required channels using the buttons below.\n\n"
-                    "Then try verifying again."
+                    "Please make sure you have joined all our required channels first."
                 ),
                 reply_markup=reply_markup
             )
@@ -366,7 +401,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             database.add_user(user_id)
             user_data = database.get_user(user_id)
 
-        is_verified_str = "✅ Yes" if user_data['is_verified'] else "❌ No (Please click 'Verify Subscription')"
+        is_verified_str = "✅ Yes" if user_data['is_verified'] else "❌ No (Please click 'Get your refer link' to verify)"
         successful_referrals = database.get_successful_referrals_count(user_id)
         required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
 
@@ -375,7 +410,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         await query.edit_message_text(
             text=(
-                "👤 <b>Your Profile</b>\n\n"
+                "👤 <b>Your Referrals</b>\n\n"
                 f"Status: Subscribed? {is_verified_str}\n"
                 f"Successful Referrals: {successful_referrals} / {required_referrals}\n\n"
                 f"🔗 <b>Your Referral Link:</b>\n{referral_link}\n\n"
@@ -428,7 +463,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 await query.edit_message_text(
                     text=(
                         "🎉 Congratulations! You have reached the required number of referrals.\n\n"
-                        f"Here is your exclusive link to the Private Channel: {invite_link.invite_link}\n\n"
+                        f"Here is your exclusive link to access CoreBTR videos: {invite_link.invite_link}\n\n"
                         "⚠️ Note: This link can only be used once. Do not share it with anyone else!"
                     ),
                     reply_markup=reply_markup
@@ -445,9 +480,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             await query.edit_message_text(
                 text=(
-                    f"You need {required_referrals} successful referrals to get the private link.\n"
+                    f"You need {required_referrals} successful referrals to get access to CoreBTR videos.\n"
                     f"You currently have {successful_referrals}.\n\n"
-                    "Share your referral link from 'My Profile' to invite more people!"
+                    "Share your referral link from 'Check your referrals' to invite more people!"
                 ),
                 reply_markup=reply_markup
             )
