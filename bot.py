@@ -2,7 +2,7 @@ import logging
 import os
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters, ChatJoinRequestHandler
 from telegram.error import BadRequest
 
 import database
@@ -198,7 +198,8 @@ async def admin_receive_private_channel(update: Update, context: ContextTypes.DE
 
     chat_id = update.message.text.strip()
     database.set_config("PRIVATE_CHANNEL_ID", chat_id)
-    await update.message.reply_text(f"Private Channel ID updated to {chat_id}. Use /admin to return to the panel.")
+    database.set_config("MASTER_INVITE_LINK", "")
+    await update.message.reply_text(f"Private Channel ID updated to {chat_id}. Master invite link has been reset. Use /admin to return to the panel.")
     return ConversationHandler.END
 
 async def admin_receive_referral_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -226,6 +227,32 @@ async def admin_receive_welcome_message(update: Update, context: ContextTypes.DE
     database.set_config("WELCOME_MESSAGE", text)
     await update.message.reply_text("Welcome message updated! Use /admin to return to the panel.")
     return ConversationHandler.END
+
+async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles chat join requests by automatically approving users who meet the criteria."""
+    join_request = update.chat_join_request
+    user_id = join_request.from_user.id
+
+    user_data = database.get_user(user_id)
+    if not user_data:
+        await join_request.decline()
+        return
+
+    is_verified = user_data.get('is_verified', False)
+    successful_referrals = database.get_successful_referrals_count(user_id)
+    required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
+
+    if is_verified and successful_referrals >= required_referrals:
+        try:
+            await join_request.approve()
+            # Optionally send a success message here if we want
+        except Exception as e:
+            logger.error(f"Error approving join request for {user_id}: {e}")
+    else:
+        try:
+            await join_request.decline()
+        except Exception as e:
+            logger.error(f"Error declining join request for {user_id}: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
@@ -446,18 +473,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        if user_data and user_data.get('has_claimed_reward'):
-            await query.edit_message_text(
-                text=(
-                    "❌ You have already claimed your reward and received a link.\n\n"
-                    "If you lost your link or it expired, please contact the administrators."
-                ),
-                reply_markup=reply_markup
-            )
-            return
-
         successful_referrals = database.get_successful_referrals_count(user_id)
-
         required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
 
         if successful_referrals >= required_referrals:
@@ -466,33 +482,35 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
                 if not private_channel_id:
                     await query.edit_message_text(
-                        text="The private channel has not been fully configured yet. Please contact an administrator.",
+                        text="The private channel has not been fully configured yet. Please contact an administrator at @talkTOadminnn_bot.",
                         reply_markup=reply_markup
                     )
                     return
 
-                try:
-                    invite_link = await context.bot.create_chat_invite_link(
-                        chat_id=private_channel_id,
-                        member_limit=1,
-                        name=f"User {user_id}"
-                    )
-                except Exception as e:
-                    logger.error(f"Error creating single user invite link for {user_id}: {e}")
-                    await query.edit_message_text(
-                        text="An error occurred while generating your invite link. Please make sure the bot is an Administrator in the Private Channel with permission to 'Invite Users'.",
-                        reply_markup=reply_markup
-                    )
-                    return
+                master_invite_link = database.get_config("MASTER_INVITE_LINK")
 
-                # Mark reward as claimed in the database
-                database.mark_reward_claimed(user_id)
+                if not master_invite_link:
+                    try:
+                        invite_link = await context.bot.create_chat_invite_link(
+                            chat_id=private_channel_id,
+                            creates_join_request=True,
+                            name="Master Join Link"
+                        )
+                        master_invite_link = invite_link.invite_link
+                        database.set_config("MASTER_INVITE_LINK", master_invite_link)
+                    except Exception as e:
+                        logger.error(f"Error creating master invite link: {e}")
+                        await query.edit_message_text(
+                            text="An error occurred while generating the invite link. Please make sure the bot is an Administrator in the Private Channel with permission to 'Invite Users'.",
+                            reply_markup=reply_markup
+                        )
+                        return
 
                 await query.edit_message_text(
                     text=(
                         "🎉 Congratulations! You have reached the required number of referrals.\n\n"
-                        f"Here is your exclusive, single-use link to access CoreBTR videos: {invite_link.invite_link}\n\n"
-                        "⚠️ Note: This link is for you only. Once you join, it cannot be used by anyone else."
+                        f"Here is your link to access CoreBTR videos: {master_invite_link}\n\n"
+                        "⚠️ Note: Click the link and request to join. The bot will automatically approve your request!"
                     ),
                     reply_markup=reply_markup
                 )
@@ -548,6 +566,7 @@ def main() -> None:
     # on different commands - answer in Telegram
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_callback))
+    application.add_handler(ChatJoinRequestHandler(handle_join_request))
 
     # Run the bot until the user presses Ctrl-C
     logger.info("Bot is starting...")
