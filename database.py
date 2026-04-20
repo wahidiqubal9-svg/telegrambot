@@ -159,6 +159,22 @@ def get_successful_referrals_count(telegram_id: int) -> int:
     conn.close()
     return count
 
+def get_all_referrers():
+    """Get a list of users who have made successful referrals, ordered by highest count."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    # Count how many verified users each referred_by has
+    cursor.execute('''
+        SELECT referred_by, COUNT(*) as count
+        FROM users
+        WHERE referred_by IS NOT NULL AND is_verified = 1
+        GROUP BY referred_by
+        ORDER BY count DESC
+    ''')
+    results = cursor.fetchall()
+    conn.close()
+    return [{'telegram_id': row[0], 'referrals': row[1]} for row in results]
+
 def mark_reward_claimed(telegram_id: int):
     """Mark that a user has already claimed their private link."""
     conn = sqlite3.connect(DB_FILE)
