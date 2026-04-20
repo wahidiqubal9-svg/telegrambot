@@ -300,7 +300,8 @@ async def send_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAU
     keyboard.extend([
         [InlineKeyboardButton(f"🔗 Step {verify_step}: Get your refer link", callback_data="get_refer_link")],
         [InlineKeyboardButton("👤 Check your referrals", callback_data="profile")],
-        [InlineKeyboardButton("🎁 Get CoreBTR videos", callback_data="get_link")]
+        [InlineKeyboardButton("🎁 Get CoreBTR videos", callback_data="get_link")],
+        [InlineKeyboardButton("💬 Talk to Admin", url="https://t.me/talkTOadminnn_bot")]
     ])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
