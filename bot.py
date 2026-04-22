@@ -2,7 +2,7 @@ import logging
 import os
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters, ChatJoinRequestHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler, MessageHandler, filters, ChatJoinRequestHandler, ChatMemberHandler
 from telegram.error import BadRequest
 
 import database
@@ -387,6 +387,40 @@ async def send_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAU
         )
         database.update_last_message_id(user_id, sent_message.message_id)
 
+async def track_chats_member_updates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Track member updates to auto-verify users when they join required channels."""
+    result = update.chat_member
+    if not result:
+        return
+
+    user_id = result.new_chat_member.user.id
+    status = result.new_chat_member.status
+
+    # We only care if they just became a member/restricted (joined)
+    if status not in ['member', 'administrator', 'creator', 'restricted']:
+        return
+
+    user_data = database.get_user(user_id)
+    if not user_data or user_data['is_verified']:
+        return
+
+    # User exists and is unverified. Check if they have now joined all required chats
+    required_chats = database.get_required_chats()
+    if not required_chats:
+        return
+
+    all_subscribed = True
+    for chat in required_chats:
+        is_sub = await check_subscription(context.bot, user_id, chat['chat_id'])
+        if not is_sub:
+            all_subscribed = False
+            break
+        else:
+            database.add_user_verified_chat(user_id, chat['chat_id'])
+
+    if all_subscribed:
+        database.mark_verified(user_id)
+
 async def check_subscription(bot, user_id, chat_id) -> bool:
     """Check if a user is a member of a specific chat."""
     try:
@@ -399,6 +433,29 @@ async def check_subscription(bot, user_id, chat_id) -> bool:
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         return False
+
+async def verify_unverified_referrals(bot, referrer_id: int):
+    """Silently check and verify any unverified referrals for a given user."""
+    unverified_referrals = database.get_unverified_referrals(referrer_id)
+    if not unverified_referrals:
+        return
+
+    required_chats = database.get_required_chats()
+    if not required_chats:
+        return
+
+    for referred_user_id in unverified_referrals:
+        all_subscribed = True
+        for chat in required_chats:
+            is_sub = await check_subscription(bot, referred_user_id, chat['chat_id'])
+            if not is_sub:
+                all_subscribed = False
+                break
+            else:
+                database.add_user_verified_chat(referred_user_id, chat['chat_id'])
+
+        if all_subscribed:
+            database.mark_verified(referred_user_id)
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Parses the CallbackQuery and updates the message text."""
@@ -509,6 +566,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await send_main_menu(query.message.chat_id, user_id, context, query=query)
 
     elif query.data == "profile":
+        # Perform on-demand check for unverified referrals first
+        await verify_unverified_referrals(context.bot, user_id)
+
         # Get user stats
         bot_username = context.bot.username
         referral_link = f"https://t.me/{bot_username}?start={user_id}"
@@ -538,6 +598,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
     elif query.data == "get_link":
+        # Perform on-demand check for unverified referrals first
+        await verify_unverified_referrals(context.bot, user_id)
+
         user_data = database.get_user(user_id)
 
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
@@ -638,6 +701,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(ChatJoinRequestHandler(handle_join_request))
+    application.add_handler(ChatMemberHandler(track_chats_member_updates, ChatMemberHandler.CHAT_MEMBER))
 
     # Run the bot until the user presses Ctrl-C
     logger.info("Bot is starting...")

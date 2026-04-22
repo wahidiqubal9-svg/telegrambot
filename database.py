@@ -158,6 +158,15 @@ def mark_verified(telegram_id: int):
     conn.commit()
     conn.close()
 
+def get_unverified_referrals(telegram_id: int):
+    """Get all unverified users referred by this user."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT telegram_id FROM users WHERE referred_by = ? AND is_verified = 0', (telegram_id,))
+    users = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return users
+
 def get_successful_referrals_count(telegram_id: int) -> int:
     """Get the count of verified users who were referred by this user."""
     conn = sqlite3.connect(DB_FILE)
