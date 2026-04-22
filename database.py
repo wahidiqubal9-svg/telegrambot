@@ -106,6 +106,15 @@ def add_user(telegram_id: int, referred_by: int = None):
 
     conn.close()
 
+def get_all_users():
+    """Get all user telegram IDs."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT telegram_id FROM users')
+    users = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return users
+
 def get_user(telegram_id: int):
     """Get user data."""
     conn = sqlite3.connect(DB_FILE)

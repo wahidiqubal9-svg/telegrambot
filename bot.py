@@ -21,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Conversation states for Admin panel
-WAITING_FOR_CHAT_ID, WAITING_FOR_CHAT_LINK, WAITING_FOR_PRIVATE_CHANNEL, WAITING_FOR_REFERRAL_GOAL, WAITING_FOR_WELCOME_MESSAGE = range(5)
+WAITING_FOR_CHAT_ID, WAITING_FOR_CHAT_LINK, WAITING_FOR_PRIVATE_CHANNEL, WAITING_FOR_REFERRAL_GOAL, WAITING_FOR_WELCOME_MESSAGE, WAITING_FOR_BROADCAST_MESSAGE = range(6)
 
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Send the admin panel."""
@@ -35,6 +35,7 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         [InlineKeyboardButton("Set Welcome Message", callback_data="admin_set_welcome")],
         [InlineKeyboardButton("View Referrer Stats", callback_data="admin_view_referrers")],
         [InlineKeyboardButton("Test private link", callback_data="admin_test_link")],
+        [InlineKeyboardButton("Broadcast to All", callback_data="admin_broadcast")],
         [InlineKeyboardButton("Close", callback_data="admin_close")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -103,6 +104,11 @@ async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(f"Current Welcome Message:\n\n{current}\n\nPlease send the new welcome message text. You can use {{required_referrals}} as a placeholder to automatically insert the current goal.", reply_markup=InlineKeyboardMarkup(keyboard))
         return WAITING_FOR_WELCOME_MESSAGE
 
+    elif query.data == "admin_broadcast":
+        keyboard = [[InlineKeyboardButton("Back", callback_data="admin_back")]]
+        await query.edit_message_text("Please send the message you want to broadcast to all users.", reply_markup=InlineKeyboardMarkup(keyboard))
+        return WAITING_FOR_BROADCAST_MESSAGE
+
     elif query.data == "admin_back":
         keyboard = [
             [InlineKeyboardButton("Manage Required Chats", callback_data="admin_manage_chats")],
@@ -111,6 +117,7 @@ async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("Set Welcome Message", callback_data="admin_set_welcome")],
             [InlineKeyboardButton("View Referrer Stats", callback_data="admin_view_referrers")],
             [InlineKeyboardButton("Test private link", callback_data="admin_test_link")],
+            [InlineKeyboardButton("Broadcast to All", callback_data="admin_broadcast")],
             [InlineKeyboardButton("Close", callback_data="admin_close")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -227,6 +234,68 @@ async def admin_receive_welcome_message(update: Update, context: ContextTypes.DE
     database.set_config("WELCOME_MESSAGE", text)
     await update.message.reply_text("Welcome message updated! Use /admin to return to the panel.")
     return ConversationHandler.END
+
+import asyncio
+from telegram.error import TelegramError
+
+async def admin_receive_broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive broadcast message from admin and send it to all users."""
+    if update.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+
+    message_text = update.message.text
+    if not message_text:
+        await update.message.reply_text("Please send text only. Use /admin to return to the panel.")
+        return ConversationHandler.END
+
+    users = database.get_all_users()
+
+    if not users:
+        await update.message.reply_text("No users found in the database. Use /admin to return to the panel.")
+        return ConversationHandler.END
+
+    await update.message.reply_text(f"Starting broadcast to {len(users)} users... This may take a while. I will notify you when it's done.")
+
+    # Run broadcast in background
+    asyncio.create_task(run_broadcast(context.bot, users, message_text, update.message.chat_id))
+
+    return ConversationHandler.END
+
+async def run_broadcast(bot, users, message_text, admin_chat_id):
+    """Background task to run the broadcast."""
+    success_count = 0
+    fail_count = 0
+
+    keyboard = [[InlineKeyboardButton("💬 Talk to Admin", url="https://t.me/talkTOadminnn_bot")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    for user_id in users:
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text=message_text,
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+            success_count += 1
+        except TelegramError as e:
+            logger.error(f"Failed to send broadcast to {user_id}: {e}")
+            fail_count += 1
+        except Exception as e:
+            logger.error(f"Unexpected error sending broadcast to {user_id}: {e}")
+            fail_count += 1
+
+        # Small delay to avoid hitting Telegram rate limits (approx 30 messages per second is limit)
+        await asyncio.sleep(0.05)
+
+    try:
+        await bot.send_message(
+            chat_id=admin_chat_id,
+            text=f"📢 <b>Broadcast Completed!</b>\n\n✅ Successful: {success_count}\n❌ Failed: {fail_count}\n\nFailed messages usually mean the user has blocked the bot or their account is deleted.",
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        logger.error(f"Failed to send broadcast summary to admin: {e}")
 
 async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles chat join requests by automatically approving users who meet the criteria."""
@@ -555,6 +624,7 @@ def main() -> None:
             WAITING_FOR_PRIVATE_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_private_channel)],
             WAITING_FOR_REFERRAL_GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_referral_goal)],
             WAITING_FOR_WELCOME_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_welcome_message)],
+            WAITING_FOR_BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_broadcast_message)],
         },
         fallbacks=[
             CommandHandler("admin", admin_start),
