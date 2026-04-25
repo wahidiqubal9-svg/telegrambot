@@ -618,17 +618,32 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 is_sub = await check_subscription(context.bot, user_id, chat_id)
                 if not is_sub:
                     all_subscribed = False
+                    database.mark_unverified(user_id)
+                    database.remove_user_verified_chat(user_id, chat_id)
+                    # We need the chat details for the unsubscribed chat
+                    required_chats = database.get_required_chats()
+                    for chat in required_chats:
+                        if chat['chat_id'] == chat_id:
+                            unsubscribed_chats.append(chat)
+                            break
                     break
-        else:
+
+        if not user_data['is_verified'] or not all_subscribed:
             # Not verified, check against all current required chats
+            all_subscribed = True
+            unsubscribed_chats = []
             required_chats = database.get_required_chats()
             for chat in required_chats:
                 is_sub = await check_subscription(context.bot, user_id, chat['chat_id'])
                 if not is_sub:
                     all_subscribed = False
                     unsubscribed_chats.append(chat)
+                    database.remove_user_verified_chat(user_id, chat['chat_id'])
                 else:
                     database.add_user_verified_chat(user_id, chat['chat_id'])
+
+            if not all_subscribed:
+                database.mark_unverified(user_id)
 
         if all_subscribed:
             if not user_data['is_verified']:
@@ -744,7 +759,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         successful_referrals = database.get_successful_referrals_count(user_id)
         required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
 
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="get_for_free")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.edit_message_text(
@@ -765,7 +780,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         user_data = database.get_user(user_id)
 
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="get_for_free")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         successful_referrals = database.get_successful_referrals_count(user_id)

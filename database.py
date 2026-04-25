@@ -264,3 +264,18 @@ def add_user_verified_chat(telegram_id: int, chat_id: str):
     cursor.execute('INSERT OR IGNORE INTO user_verified_chats (telegram_id, chat_id) VALUES (?, ?)', (telegram_id, chat_id))
     conn.commit()
     conn.close()
+def mark_unverified(telegram_id: int):
+    """Mark a user as unverified."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE users SET is_verified = 0 WHERE telegram_id = ?', (telegram_id,))
+    conn.commit()
+    conn.close()
+
+def remove_user_verified_chat(telegram_id: int, chat_id: str):
+    """Remove a user verified chat."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM user_verified_chats WHERE telegram_id = ? AND chat_id = ?', (telegram_id, chat_id))
+    conn.commit()
+    conn.close()
