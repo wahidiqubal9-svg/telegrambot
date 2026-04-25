@@ -903,6 +903,9 @@ def main() -> None:
     application.add_handler(ChatJoinRequestHandler(handle_join_request))
     application.add_handler(ChatMemberHandler(track_chats_member_updates, ChatMemberHandler.CHAT_MEMBER))
 
+    # Trigger /start for any text message that is not a command
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
+
     # Run the bot until the user presses Ctrl-C
     logger.info("Bot is starting...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
