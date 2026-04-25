@@ -645,6 +645,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if not all_subscribed:
                 database.mark_unverified(user_id)
 
+        # Get all required chats to display buttons always
+        all_required_chats = database.get_required_chats()
+
         if all_subscribed:
             if not user_data['is_verified']:
                 database.mark_verified(user_id)
@@ -654,18 +657,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
             hub_text = (
-                "✅ <b>You have successfully subscribed!</b>\n\n"
-                "Here is your referral link. Tap the link below to copy it:\n\n"
-                f"<code>{referral_link}</code>\n\n"
-                "<b>Instructions:</b> Forward the above link to your friends! "
-                "Once they subscribe to the required channels, it will count as a successful referral."
+                "✅ <b>You are subscribed!</b> Your referral link: "
+                f"<code>{referral_link}</code> "
+                "How to earn: Share this link with friends. You get 1 successful referral when they join our free channels shown as channel 1 & channel 2!"
             )
 
-            keyboard = [
+            keyboard = []
+            for i, chat in enumerate(all_required_chats, start=1):
+                keyboard.append([InlineKeyboardButton(f"📢 Subscribe Channel {i}", url=chat['link'])])
+
+            keyboard.extend([
+                [InlineKeyboardButton("✅ You are subscribed", callback_data="verify_subscriptions")],
                 [InlineKeyboardButton("👤 Check your referrals", callback_data="profile")],
                 [InlineKeyboardButton("🎁 Claim free CoreBTR + PDFs", callback_data="get_link")],
                 [InlineKeyboardButton("🔙 Back to Menu", callback_data="start_menu")]
-            ]
+            ])
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await query.edit_message_text(
@@ -675,8 +681,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         else:
             keyboard = []
-            # Only show buttons for channels the user hasn't subscribed to yet
-            for i, chat in enumerate(unsubscribed_chats, start=1):
+            # Show buttons for all required channels regardless of subscription
+            for i, chat in enumerate(all_required_chats, start=1):
                 keyboard.append([InlineKeyboardButton(f"📢 Subscribe Channel {i}", url=chat['link'])])
 
             keyboard.extend([
@@ -896,6 +902,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(ChatJoinRequestHandler(handle_join_request))
     application.add_handler(ChatMemberHandler(track_chats_member_updates, ChatMemberHandler.CHAT_MEMBER))
+
+    # Trigger /start for any text message that is not a command
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
 
     # Run the bot until the user presses Ctrl-C
     logger.info("Bot is starting...")
