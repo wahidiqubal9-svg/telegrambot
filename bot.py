@@ -21,7 +21,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Conversation states for Admin panel
-WAITING_FOR_CHAT_ID, WAITING_FOR_CHAT_LINK, WAITING_FOR_PRIVATE_CHANNEL, WAITING_FOR_REFERRAL_GOAL, WAITING_FOR_WELCOME_MESSAGE, WAITING_FOR_BROADCAST_MESSAGE = range(6)
+WAITING_FOR_CHAT_ID, WAITING_FOR_CHAT_LINK, WAITING_FOR_PRIVATE_CHANNEL, WAITING_FOR_REFERRAL_GOAL, WAITING_FOR_WELCOME_MESSAGE, WAITING_FOR_BROADCAST_MESSAGE, WAITING_FOR_QR_CODE = range(7)
+
+# Conversation states for User panel
+WAITING_FOR_PAYMENT_SCREENSHOT = 100
 
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Send the admin panel."""
@@ -33,6 +36,7 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         [InlineKeyboardButton("Set Private Channel ID", callback_data="admin_set_private")],
         [InlineKeyboardButton("Set Referral Goal", callback_data="admin_set_goal")],
         [InlineKeyboardButton("Set Welcome Message", callback_data="admin_set_welcome")],
+        [InlineKeyboardButton("Set Payment QR Code", callback_data="admin_set_qr_code")],
         [InlineKeyboardButton("View Referrer Stats", callback_data="admin_view_referrers")],
         [InlineKeyboardButton("Test private link", callback_data="admin_test_link")],
         [InlineKeyboardButton("Broadcast to All", callback_data="admin_broadcast")],
@@ -103,6 +107,11 @@ async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = [[InlineKeyboardButton("Back", callback_data="admin_back")]]
         await query.edit_message_text(f"Current Welcome Message:\n\n{current}\n\nPlease send the new welcome message text. You can use {{required_referrals}} as a placeholder to automatically insert the current goal.", reply_markup=InlineKeyboardMarkup(keyboard))
         return WAITING_FOR_WELCOME_MESSAGE
+
+    elif query.data == "admin_set_qr_code":
+        keyboard = [[InlineKeyboardButton("Back", callback_data="admin_back")]]
+        await query.edit_message_text("Please send the new QR code image as a photo.", reply_markup=InlineKeyboardMarkup(keyboard))
+        return WAITING_FOR_QR_CODE
 
     elif query.data == "admin_broadcast":
         keyboard = [[InlineKeyboardButton("Back", callback_data="admin_back")]]
@@ -323,7 +332,85 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception as e:
             logger.error(f"Error declining join request for {user_id}: {e}")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def admin_receive_qr_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle receiving the new payment QR code image from the admin."""
+    if update.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+
+    photo = update.message.photo[-1] # Get the highest resolution photo
+    file_id = photo.file_id
+
+    database.set_config("PAYMENT_QR_FILE_ID", file_id)
+
+    keyboard = [[InlineKeyboardButton("Back to Admin Panel", callback_data="admin_close")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "✅ Payment QR code has been successfully updated!",
+        reply_markup=reply_markup
+    )
+
+    return ConversationHandler.END
+
+async def user_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Callback when user clicks 'after payment' button."""
+    query = update.callback_query
+    await query.answer()
+
+    keyboard = [[InlineKeyboardButton("🔙 Cancel & Back", callback_data="start_menu_from_conv")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_caption(
+        caption="Please upload the screenshot of your successful payment below. Our admin will verify it shortly.",
+        reply_markup=reply_markup
+    )
+    return WAITING_FOR_PAYMENT_SCREENSHOT
+
+async def start_menu_from_conv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Callback to return to start menu from within a conversation and end it."""
+    query = update.callback_query
+    await query.answer()
+
+    # Delegate sending the main menu to the existing send_main_menu logic
+    await send_main_menu(query.message.chat_id, query.from_user.id, context, query=query)
+
+    return ConversationHandler.END
+
+
+async def receive_payment_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle user uploading a payment screenshot."""
+    user = update.effective_user
+    photo = update.message.photo[-1]
+    file_id = photo.file_id
+
+    keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="start_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "✅ Your payment screenshot has been submitted! Please wait for the admin to verify it.",
+        reply_markup=reply_markup
+    )
+
+    # Send to admin
+    admin_keyboard = [
+        [
+            InlineKeyboardButton("✅ Received", callback_data=f"payment_received_{user.id}"),
+            InlineKeyboardButton("❌ Didn't Receive", callback_data=f"payment_rejected_{user.id}")
+        ]
+    ]
+    admin_markup = InlineKeyboardMarkup(admin_keyboard)
+
+    username_str = f" (@{user.username})" if user.username else ""
+    await context.bot.send_photo(
+        chat_id=ADMIN_ID,
+        photo=file_id,
+        caption=f"Payment screenshot submitted by User {user.id}{username_str}.",
+        reply_markup=admin_markup
+    )
+
+    return ConversationHandler.END
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Send a message when the command /start is issued."""
     user = update.effective_user
     chat_id = update.effective_chat.id
@@ -349,36 +436,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass # Message might already be deleted
 
     await send_main_menu(chat_id, user.id, context)
+    return ConversationHandler.END
 
 async def send_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAULT_TYPE, query=None) -> None:
     """Send the main menu with inline buttons."""
-    required_chats = database.get_required_chats()
     required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
-    welcome_text = database.get_config("WELCOME_MESSAGE", "Welcome! To gain access to our exclusive Private Channel, you need to:\n\n1. Subscribe to our required channels\n2. Invite {required_referrals} friends using your referral link who also complete step 1.\n\nUse the buttons below to navigate.")
+    welcome_text = database.get_config("WELCOME_MESSAGE", "Welcome! Please choose an option below.")
 
     # Replace dynamic placeholder if it exists in the text
     welcome_text = welcome_text.replace("{required_referrals}", str(required_referrals))
 
-    keyboard = []
-    # Add one button per row with dynamic step numbers
-    for i, chat in enumerate(required_chats, start=1):
-        keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Subscribe Channel {i}", url=chat['link'])])
-
-    verify_step = len(required_chats) + 1
-
-    keyboard.extend([
-        [InlineKeyboardButton(f"🔗 Step {verify_step}: Get your refer link", callback_data="get_refer_link")],
-        [InlineKeyboardButton("👤 Check your referrals", callback_data="profile")],
-        [InlineKeyboardButton("🎁 Get CoreBTR videos", callback_data="get_link")],
-        [InlineKeyboardButton("💬 Talk to Admin", url="https://t.me/talkTOadminnn_bot")]
-    ])
+    keyboard = [
+        [InlineKeyboardButton("1. Get CoreBTR videos + PDFs", callback_data="get_corebtr")],
+        [InlineKeyboardButton("2. Talk to Admin", url="https://t.me/talkTOadminnn_bot")]
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if query:
-        await query.edit_message_text(
-            text=welcome_text,
-            reply_markup=reply_markup,
-        )
+        # Check if the query message is a photo (like QR code). If so, we need to delete it and send a new text message.
+        if query.message.photo:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            sent_message = await context.bot.send_message(
+                chat_id=chat_id,
+                text=welcome_text,
+                reply_markup=reply_markup,
+            )
+            database.update_last_message_id(user_id, sent_message.message_id)
+        else:
+            await query.edit_message_text(
+                text=welcome_text,
+                reply_markup=reply_markup,
+            )
     else:
         sent_message = await context.bot.send_message(
             chat_id=chat_id,
@@ -464,13 +555,61 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     user_id = query.from_user.id
 
-    if query.data == "verify" or query.data == "get_refer_link":
+    if query.data.startswith("payment_received_") or query.data.startswith("payment_rejected_"):
+        if user_id != ADMIN_ID:
+            await query.answer("Unauthorized.", show_alert=True)
+            return
+
+        target_user_id = int(query.data.split("_")[-1])
+
+        if query.data.startswith("payment_received_"):
+            # Provide single-use link
+            private_channel_id = database.get_config("PRIVATE_CHANNEL_ID")
+            if not private_channel_id:
+                await query.edit_message_caption("Payment accepted, but Private Channel ID is not set. Could not generate link.")
+                return
+
+            try:
+                invite_link = await context.bot.create_chat_invite_link(
+                    chat_id=private_channel_id,
+                    member_limit=1,
+                    name=f"Paid Link User {target_user_id}"
+                )
+
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text=(
+                        "✅ <b>Your payment was verified!</b>\n\n"
+                        "Here is your single-use invite link to access CoreBTR videos:\n\n"
+                        f"{invite_link.invite_link}\n\n"
+                        "⚠️ Note: This link will expire after one use. Do not share it!"
+                    ),
+                    parse_mode='HTML'
+                )
+
+                await query.edit_message_caption(f"✅ Payment accepted. Link sent to User {target_user_id}.")
+            except Exception as e:
+                logger.error(f"Error generating paid link for {target_user_id}: {e}")
+                await query.edit_message_caption(f"Payment accepted, but failed to generate link. Check bot permissions.")
+
+        elif query.data.startswith("payment_rejected_"):
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text="❌ <b>Your payment could not be verified.</b>\n\nPlease ensure you sent the correct screenshot, or contact support.",
+                parse_mode='HTML'
+            )
+            await query.edit_message_caption(f"❌ Payment rejected for User {target_user_id}.")
+
+        return
+
+    if query.data == "get_for_free" or query.data == "verify_subscriptions":
         user_data = database.get_user(user_id)
         if not user_data:
             database.add_user(user_id)
             user_data = database.get_user(user_id)
 
         all_subscribed = True
+        unsubscribed_chats = []
 
         if user_data['is_verified']:
             # Already verified, only check the chats they originally verified against
@@ -487,79 +626,102 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 is_sub = await check_subscription(context.bot, user_id, chat['chat_id'])
                 if not is_sub:
                     all_subscribed = False
-                    break
+                    unsubscribed_chats.append(chat)
                 else:
                     database.add_user_verified_chat(user_id, chat['chat_id'])
 
         if all_subscribed:
-            # Mark user as verified in DB
             if not user_data['is_verified']:
                 database.mark_verified(user_id)
 
-            if query.data == "get_refer_link":
-                bot_username = context.bot.username
-                referral_link = f"https://t.me/{bot_username}?start={user_id}"
+            # Show Referral Hub
+            bot_username = context.bot.username
+            referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
-                shareable_text = (
-                    "🎁 Get Complete CoreBTR videos and Pdfs absolutely free of cost by simply joining the link below.....\n\n"
-                    f"👉 Click here to get the videos: {referral_link}\n\n"
-                    "📺 Check Demo CoreBTR videos: https://t.me/+WouYXoiPIcE3ZTFl"
-                )
+            hub_text = (
+                "✅ <b>You have successfully subscribed!</b>\n\n"
+                "Here is your referral link. Tap the link below to copy it:\n\n"
+                f"<code>{referral_link}</code>\n\n"
+                "<b>Instructions:</b> Forward the above link to your friends! "
+                "Once they subscribe to the required channels, it will count as a successful referral."
+            )
 
-                instructions_text = (
-                    "⬆️ Forward the message above to your friends to invite them! "
-                    "Once they subscribe to the required channels, it will count as a successful referral."
-                )
-
-                # Send the two separate messages
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=shareable_text,
-                    parse_mode='HTML'
-                )
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=instructions_text,
-                    parse_mode='HTML'
-                )
-
-                # Keep the main menu exactly as it is, or show a brief success message
-                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-
-                await query.edit_message_text(
-                    text="✅ Your referral link has been sent below! 👇",
-                    reply_markup=reply_markup
-                )
-            else:
-                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="start_menu")]]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-
-                await query.edit_message_text(
-                    text="✅ Subscription verified! You are now eligible to refer others.",
-                    reply_markup=reply_markup
-                )
-        else:
-            required_chats = database.get_required_chats()
-            keyboard = []
-            for i, chat in enumerate(required_chats, start=1):
-                keyboard.append([InlineKeyboardButton(f"📢 Step {i}: Subscribe Channel {i}", url=chat['link'])])
-
-            verify_step = len(required_chats) + 1
-
-            keyboard.extend([
-                [InlineKeyboardButton(f"🔗 Step {verify_step}: Get your refer link", callback_data="get_refer_link")],
+            keyboard = [
+                [InlineKeyboardButton("👤 Check your referrals", callback_data="profile")],
+                [InlineKeyboardButton("🎁 Claim free CoreBTR + PDFs", callback_data="get_link")],
                 [InlineKeyboardButton("🔙 Back to Menu", callback_data="start_menu")]
-            ])
+            ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await query.edit_message_text(
-                text=(
-                    "❌ Verification failed.\n\n"
-                    "Please make sure you have joined all our required channels first."
-                ),
+                text=hub_text,
+                parse_mode='HTML',
                 reply_markup=reply_markup
             )
+        else:
+            keyboard = []
+            # Only show buttons for channels the user hasn't subscribed to yet
+            for i, chat in enumerate(unsubscribed_chats, start=1):
+                keyboard.append([InlineKeyboardButton(f"📢 Subscribe Channel {i}", url=chat['link'])])
+
+            keyboard.extend([
+                [InlineKeyboardButton("🔄 Verify Subscriptions", callback_data="verify_subscriptions")],
+                [InlineKeyboardButton("🔙 Back", callback_data="get_corebtr")]
+            ])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            msg_text = "Please subscribe to the channels below. Once you subscribe, click 'Verify Subscriptions' to continue."
+            if query.data == "verify_subscriptions":
+                msg_text = "❌ Verification failed. Please make sure you have joined all the remaining channels below, then click 'Verify Subscriptions'."
+
+            await query.edit_message_text(
+                text=msg_text,
+                reply_markup=reply_markup
+            )
+
+    elif query.data == "get_corebtr":
+        keyboard = [
+            [InlineKeyboardButton("1. Get it for free", callback_data="get_for_free")],
+            [InlineKeyboardButton("2. Pay ₹300, get it instantly", callback_data="pay_instantly")],
+            [InlineKeyboardButton("🔙 Back", callback_data="start_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            text="Choose how you would like to get CoreBTR videos + PDFs:",
+            reply_markup=reply_markup
+        )
+
+    elif query.data == "pay_instantly":
+        qr_file_id = database.get_config("PAYMENT_QR_FILE_ID")
+
+        if not qr_file_id:
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="get_corebtr")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                text="The payment QR code has not been set by the admin yet. Please try again later or contact support.",
+                reply_markup=reply_markup
+            )
+            return
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Click here after payment", callback_data="after_payment")],
+            [InlineKeyboardButton("🔙 Back", callback_data="start_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # We must delete the current text message and send a photo message
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        sent_msg = await context.bot.send_photo(
+            chat_id=query.message.chat_id,
+            photo=qr_file_id,
+            caption="Please scan the QR code to pay ₹300.\n\nOnce paid, click the button below to upload your screenshot.",
+            reply_markup=reply_markup
+        )
+        database.update_last_message_id(user_id, sent_msg.message_id)
 
     elif query.data == "start_menu":
         # Edit the previous callback message to show the main menu
@@ -688,6 +850,7 @@ def main() -> None:
             WAITING_FOR_REFERRAL_GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_referral_goal)],
             WAITING_FOR_WELCOME_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_welcome_message)],
             WAITING_FOR_BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_broadcast_message)],
+            WAITING_FOR_QR_CODE: [MessageHandler(filters.PHOTO & ~filters.COMMAND, admin_receive_qr_code)],
         },
         fallbacks=[
             CommandHandler("admin", admin_start),
@@ -696,6 +859,22 @@ def main() -> None:
         allow_reentry=True
     )
     application.add_handler(admin_conv_handler)
+
+    # User Conversation Handler (for uploading payment screenshots)
+    user_conv_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(user_payment_callback, pattern="^after_payment$")
+        ],
+        states={
+            WAITING_FOR_PAYMENT_SCREENSHOT: [MessageHandler(filters.PHOTO & ~filters.COMMAND, receive_payment_screenshot)],
+        },
+        fallbacks=[
+            CommandHandler("start", start),
+            CallbackQueryHandler(start_menu_from_conv, pattern="^start_menu_from_conv$")
+        ],
+        allow_reentry=True
+    )
+    application.add_handler(user_conv_handler)
 
     # on different commands - answer in Telegram
     application.add_handler(CommandHandler("start", start))
