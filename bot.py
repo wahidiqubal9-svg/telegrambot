@@ -466,10 +466,16 @@ async def send_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAU
             )
             database.update_last_message_id(user_id, sent_message.message_id)
         else:
-            await query.edit_message_text(
-                text=welcome_text,
-                reply_markup=reply_markup,
-            )
+            try:
+                await query.edit_message_text(
+                    text=welcome_text,
+                    reply_markup=reply_markup,
+                )
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    pass
+                else:
+                    raise e
     else:
         sent_message = await context.bot.send_message(
             chat_id=chat_id,
@@ -705,13 +711,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         keyboard = [
             [InlineKeyboardButton("1. Get it for free", callback_data="get_for_free")],
             [InlineKeyboardButton("2. Pay ₹300, get it instantly", callback_data="pay_instantly")],
-            [InlineKeyboardButton("🔙 Back", callback_data="start_menu")]
+            [InlineKeyboardButton("🔙 Back", callback_data="start_menu")],
+            [InlineKeyboardButton("2. Talk to Admin", url="https://t.me/talkTOadminnn_bot")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            text="Choose how you would like to get CoreBTR videos + PDFs:",
-            reply_markup=reply_markup
-        )
+
+        required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
+        welcome_text = database.get_config("WELCOME_MESSAGE", "Welcome! Please choose an option below.")
+        welcome_text = welcome_text.replace("{required_referrals}", str(required_referrals))
+
+        try:
+            await query.edit_message_text(
+                text=welcome_text,
+                reply_markup=reply_markup
+            )
+        except BadRequest as e:
+            if "Message is not modified" in str(e):
+                pass
+            else:
+                raise e
 
     elif query.data == "pay_instantly":
         qr_file_id = database.get_config("PAYMENT_QR_FILE_ID")
