@@ -438,7 +438,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await send_main_menu(chat_id, user.id, context)
     return ConversationHandler.END
 
-async def send_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAULT_TYPE, query=None) -> None:
+async def send_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAULT_TYPE, query=None, expanded=False) -> None:
     """Send the main menu with inline buttons."""
     required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
     welcome_text = database.get_config("WELCOME_MESSAGE", "Welcome! Please choose an option below.")
@@ -446,10 +446,19 @@ async def send_main_menu(chat_id: int, user_id: int, context: ContextTypes.DEFAU
     # Replace dynamic placeholder if it exists in the text
     welcome_text = welcome_text.replace("{required_referrals}", str(required_referrals))
 
-    keyboard = [
-        [InlineKeyboardButton("1. Get CoreBTR videos + PDFs", callback_data="get_corebtr")],
-        [InlineKeyboardButton("2. Talk to Admin", url="https://t.me/talkTOadminnn_bot")]
-    ]
+    if not expanded:
+        keyboard = [
+            [InlineKeyboardButton("🎁 Get CoreBTR Videos + PDFs", callback_data="expand_corebtr")],
+            [InlineKeyboardButton("💬 Talk to Admin", url="https://t.me/talkTOadminnn_bot")]
+        ]
+    else:
+        keyboard = [
+            [InlineKeyboardButton("🎁 Get CoreBTR Videos + PDFs", callback_data="collapse_corebtr")],
+            [InlineKeyboardButton(f"🆓 Invite {required_referrals} Friends & Get It Free", callback_data="get_for_free")],
+            [InlineKeyboardButton("💸 Get it For ₹300 (No Invites)", callback_data="pay_instantly")],
+            [InlineKeyboardButton("💬 Talk to Admin", url="https://t.me/talkTOadminnn_bot")]
+        ]
+
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if query:
@@ -694,7 +703,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
             keyboard.extend([
                 [InlineKeyboardButton("🔄 Verify Subscriptions", callback_data="verify_subscriptions")],
-                [InlineKeyboardButton("🔙 Back", callback_data="get_corebtr")]
+                [InlineKeyboardButton("🔙 Back", callback_data="expand_corebtr")]
             ])
             reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -707,35 +716,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 reply_markup=reply_markup
             )
 
-    elif query.data == "get_corebtr":
-        keyboard = [
-            [InlineKeyboardButton("1. Get it for free", callback_data="get_for_free")],
-            [InlineKeyboardButton("2. Pay ₹300, get it instantly", callback_data="pay_instantly")],
-            [InlineKeyboardButton("🔙 Back", callback_data="start_menu")],
-            [InlineKeyboardButton("2. Talk to Admin", url="https://t.me/talkTOadminnn_bot")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+    elif query.data == "expand_corebtr":
+        await send_main_menu(query.message.chat_id, user_id, context, query=query, expanded=True)
 
-        required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
-        welcome_text = database.get_config("WELCOME_MESSAGE", "Welcome! Please choose an option below.")
-        welcome_text = welcome_text.replace("{required_referrals}", str(required_referrals))
-
-        try:
-            await query.edit_message_text(
-                text=welcome_text,
-                reply_markup=reply_markup
-            )
-        except BadRequest as e:
-            if "Message is not modified" in str(e):
-                pass
-            else:
-                raise e
+    elif query.data == "collapse_corebtr":
+        await send_main_menu(query.message.chat_id, user_id, context, query=query, expanded=False)
 
     elif query.data == "pay_instantly":
         qr_file_id = database.get_config("PAYMENT_QR_FILE_ID")
 
         if not qr_file_id:
-            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="get_corebtr")]]
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="expand_corebtr")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
                 text="The payment QR code has not been set by the admin yet. Please try again later or contact support.",
@@ -745,7 +736,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         keyboard = [
             [InlineKeyboardButton("✅ Click here after payment", callback_data="after_payment")],
-            [InlineKeyboardButton("🔙 Back", callback_data="start_menu")]
+            [InlineKeyboardButton("🔙 Back", callback_data="expand_corebtr")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -784,7 +775,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         successful_referrals = database.get_successful_referrals_count(user_id)
         required_referrals = int(database.get_config("REQUIRED_REFERRALS", "10"))
 
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="get_for_free")]]
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="expand_corebtr")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.edit_message_text(
@@ -805,7 +796,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         user_data = database.get_user(user_id)
 
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="get_for_free")]]
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="expand_corebtr")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         successful_referrals = database.get_successful_referrals_count(user_id)
