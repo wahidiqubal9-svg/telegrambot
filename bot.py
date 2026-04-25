@@ -657,9 +657,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
             hub_text = (
-                "✅ <b>You are subscribed!</b> Your referral link: "
-                f"<code>{referral_link}</code> "
-                "How to earn: Share this link with friends. You get 1 successful referral when they join our free channels shown as channel 1 & channel 2!"
+                "✅ <b>You are subscribed!</b>\n\n"
+                "👇 Tap on the link below to copy:\n"
+                f"<code>{referral_link}</code>\n\n"
+                "🎁 How to earn:\n"
+                "Share this link with friends. You get 1 successful referral when they join our free channels shown as channel 1 & channel 2!"
             )
 
             keyboard = []
@@ -667,7 +669,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 keyboard.append([InlineKeyboardButton(f"📢 Subscribe Channel {i}", url=chat['link'])])
 
             keyboard.extend([
-                [InlineKeyboardButton("✅ You are subscribed", callback_data="verify_subscriptions")],
                 [InlineKeyboardButton("👤 Check your referrals", callback_data="profile")],
                 [InlineKeyboardButton("🎁 Claim free CoreBTR + PDFs", callback_data="get_link")],
                 [InlineKeyboardButton("🔙 Back to Menu", callback_data="start_menu")]
