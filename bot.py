@@ -418,8 +418,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Check if there is a referral argument (e.g. /start 123456789)
     args = context.args
     referred_by = None
-    if args and args[0].isdigit():
-        referrer_id = int(args[0])
+    if getattr(context, "args", None) and context.args[0].isdigit():
+        referrer_id = int(context.args[0])
         # Make sure they aren't referring themselves
         if referrer_id != user.id:
             referred_by = referrer_id
@@ -657,9 +657,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
             hub_text = (
-                "✅ <b>You are subscribed!</b> Your referral link: "
-                f"<code>{referral_link}</code> "
-                "How to earn: Share this link with friends. You get 1 successful referral when they join our free channels shown as channel 1 & channel 2!"
+                "✅ <b>You are subscribed!</b>\n\n"
+                "Tap on the link below to copy it:\n\n"
+                f"🔗 <code>{referral_link}</code>\n\n"
+                "<b>How to earn:</b> Share this link with friends. You get 1 successful referral when they join our free channels shown as channel 1 & channel 2!"
             )
 
             keyboard = []
@@ -674,11 +675,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             ])
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await query.edit_message_text(
-                text=hub_text,
-                parse_mode='HTML',
-                reply_markup=reply_markup
-            )
+            try:
+                await query.edit_message_text(
+                    text=hub_text,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
         else:
             keyboard = []
             # Show buttons for all required channels regardless of subscription
@@ -695,10 +700,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if query.data == "verify_subscriptions":
                 msg_text = "❌ Verification failed. Please make sure you have joined all the remaining channels below, then click 'Verify Subscriptions'."
 
-            await query.edit_message_text(
-                text=msg_text,
-                reply_markup=reply_markup
-            )
+            try:
+                await query.edit_message_text(
+                    text=msg_text,
+                    reply_markup=reply_markup
+                )
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
 
     elif query.data == "get_corebtr":
         keyboard = [
@@ -904,7 +913,11 @@ def main() -> None:
     application.add_handler(ChatMemberHandler(track_chats_member_updates, ChatMemberHandler.CHAT_MEMBER))
 
     # Trigger /start for any text message that is not a command
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
+    async def handle_text_as_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        if update.message and update.message.chat.type == "private":
+            await start(update, context)
+
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_as_start))
 
     # Run the bot until the user presses Ctrl-C
     logger.info("Bot is starting...")
