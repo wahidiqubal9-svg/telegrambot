@@ -292,11 +292,10 @@ async def sync_premium_members(bot, admin_chat_id):
             if member.status in ['member', 'creator', 'administrator', 'restricted']:
                 database.add_private_channel_member(user_id)
                 success_count += 1
-            else:
-                database.remove_private_channel_member(user_id)
         except BadRequest as e:
             # User not in channel or bot doesn't have access
-            database.remove_private_channel_member(user_id)
+            # We don't remove existing ones per "permanent" rule
+            pass
         except Exception as e:
             logger.error(f"Error checking status for {user_id}: {e}")
             fail_count += 1
@@ -588,8 +587,8 @@ async def track_chats_member_updates(update: Update, context: ContextTypes.DEFAU
     if private_channel_id and (chat_id == private_channel_id or private_channel_username == private_channel_id):
         if status in ['member', 'administrator', 'creator', 'restricted']:
             database.add_private_channel_member(user_id)
-        elif status in ['left', 'kicked']:
-            database.remove_private_channel_member(user_id)
+        # Note: We specifically DO NOT remove them if they leave (['left', 'kicked']).
+        # Once a premium member, always a premium member.
 
     # We only care if they just became a member/restricted (joined)
     if status not in ['member', 'administrator', 'creator', 'restricted']:
