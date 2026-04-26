@@ -58,6 +58,14 @@ def init_db():
         )
     ''')
 
+    # Create private_channel_members table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS private_channel_members (
+            telegram_id INTEGER PRIMARY KEY,
+            FOREIGN KEY (telegram_id) REFERENCES users (telegram_id)
+        )
+    ''')
+
     conn.commit()
 
     # Initialize config and required_chats from env if empty
@@ -279,3 +287,40 @@ def remove_user_verified_chat(telegram_id: int, chat_id: str):
     cursor.execute('DELETE FROM user_verified_chats WHERE telegram_id = ? AND chat_id = ?', (telegram_id, chat_id))
     conn.commit()
     conn.close()
+
+def add_private_channel_member(telegram_id: int):
+    """Add a user to the private channel members table."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('INSERT OR IGNORE INTO private_channel_members (telegram_id) VALUES (?)', (telegram_id,))
+    conn.commit()
+    conn.close()
+
+def remove_private_channel_member(telegram_id: int):
+    """Remove a user from the private channel members table."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM private_channel_members WHERE telegram_id = ?', (telegram_id,))
+    conn.commit()
+    conn.close()
+
+def get_all_private_channel_members():
+    """Get all users who are currently in the private channel."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT telegram_id FROM private_channel_members')
+    users = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return users
+
+def get_regular_users():
+    """Get all users who are NOT in the private channel."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT telegram_id FROM users
+        WHERE telegram_id NOT IN (SELECT telegram_id FROM private_channel_members)
+    ''')
+    users = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return users
