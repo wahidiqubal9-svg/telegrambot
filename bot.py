@@ -39,7 +39,7 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         [InlineKeyboardButton("Set Payment QR Code", callback_data="admin_set_qr_code")],
         [InlineKeyboardButton("View Referrer Stats", callback_data="admin_view_referrers")],
         [InlineKeyboardButton("Test private link", callback_data="admin_test_link")],
-        [InlineKeyboardButton("Broadcast to All", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("Broadcast Messages", callback_data="admin_broadcast_menu")],
         [InlineKeyboardButton("Close", callback_data="admin_close")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -113,10 +113,36 @@ async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("Please send the new QR code image as a photo.", reply_markup=InlineKeyboardMarkup(keyboard))
         return WAITING_FOR_QR_CODE
 
-    elif query.data == "admin_broadcast":
-        keyboard = [[InlineKeyboardButton("Back", callback_data="admin_back")]]
-        await query.edit_message_text("Please send the message you want to broadcast to all users.", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif query.data == "admin_broadcast_menu":
+        keyboard = [
+            [InlineKeyboardButton("Broadcast to All", callback_data="admin_broadcast_all")],
+            [InlineKeyboardButton("Broadcast to Premium Members", callback_data="admin_broadcast_premium")],
+            [InlineKeyboardButton("Broadcast to Regulars", callback_data="admin_broadcast_regular")],
+            [InlineKeyboardButton("Sync Premium Members", callback_data="admin_sync_premium")],
+            [InlineKeyboardButton("Back", callback_data="admin_back")]
+        ]
+        await query.edit_message_text("Select broadcast target:", reply_markup=InlineKeyboardMarkup(keyboard))
+        # Keep conversation active to receive the broadcast message callbacks
         return WAITING_FOR_BROADCAST_MESSAGE
+
+    elif query.data.startswith("admin_broadcast_") and query.data != "admin_broadcast_menu":
+        target = query.data.split("_")[-1]
+        context.user_data['broadcast_target'] = target
+
+        target_name = "all users"
+        if target == "premium":
+            target_name = "premium members (in private channel)"
+        elif target == "regular":
+            target_name = "regular users (not in private channel)"
+
+        keyboard = [[InlineKeyboardButton("Back", callback_data="admin_broadcast_menu")]]
+        await query.edit_message_text(f"Please send the message you want to broadcast to {target_name}.", reply_markup=InlineKeyboardMarkup(keyboard))
+        return WAITING_FOR_BROADCAST_MESSAGE
+
+    elif query.data == "admin_sync_premium":
+        await query.edit_message_text("Starting synchronization of premium members... This may take a while. You will be notified when it is complete.")
+        asyncio.create_task(sync_premium_members(context.bot, query.from_user.id))
+        return ConversationHandler.END
 
     elif query.data == "admin_back":
         keyboard = [
@@ -124,9 +150,10 @@ async def admin_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("Set Private Channel ID", callback_data="admin_set_private")],
             [InlineKeyboardButton("Set Referral Goal", callback_data="admin_set_goal")],
             [InlineKeyboardButton("Set Welcome Message", callback_data="admin_set_welcome")],
+            [InlineKeyboardButton("Set Payment QR Code", callback_data="admin_set_qr_code")],
             [InlineKeyboardButton("View Referrer Stats", callback_data="admin_view_referrers")],
             [InlineKeyboardButton("Test private link", callback_data="admin_test_link")],
-            [InlineKeyboardButton("Broadcast to All", callback_data="admin_broadcast")],
+            [InlineKeyboardButton("Broadcast Messages", callback_data="admin_broadcast_menu")],
             [InlineKeyboardButton("Close", callback_data="admin_close")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -247,8 +274,43 @@ async def admin_receive_welcome_message(update: Update, context: ContextTypes.DE
 import asyncio
 from telegram.error import TelegramError
 
+async def sync_premium_members(bot, admin_chat_id):
+    """Background task to sync the private_channel_members table by checking Telegram API directly."""
+    users = database.get_all_users()
+    private_channel_id = database.get_config("PRIVATE_CHANNEL_ID")
+
+    if not private_channel_id:
+        await bot.send_message(chat_id=admin_chat_id, text="Private Channel ID is not set. Cannot sync.")
+        return
+
+    success_count = 0
+    fail_count = 0
+
+    for user_id in users:
+        try:
+            member = await bot.get_chat_member(chat_id=private_channel_id, user_id=user_id)
+            if member.status in ['member', 'creator', 'administrator', 'restricted']:
+                database.add_private_channel_member(user_id)
+                success_count += 1
+            else:
+                database.remove_private_channel_member(user_id)
+        except BadRequest as e:
+            # User not in channel or bot doesn't have access
+            database.remove_private_channel_member(user_id)
+        except Exception as e:
+            logger.error(f"Error checking status for {user_id}: {e}")
+            fail_count += 1
+
+        await asyncio.sleep(0.05) # Rate limit protection
+
+    await bot.send_message(
+        chat_id=admin_chat_id,
+        text=f"🔄 <b>Sync Completed!</b>\n\nFound {success_count} premium members.\nFailed checks: {fail_count}",
+        parse_mode='HTML'
+    )
+
 async def admin_receive_broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Receive broadcast message from admin and send it to all users."""
+    """Receive broadcast message from admin and send it to target users."""
     if update.effective_user.id != ADMIN_ID:
         return ConversationHandler.END
 
@@ -257,13 +319,26 @@ async def admin_receive_broadcast_message(update: Update, context: ContextTypes.
         await update.message.reply_text("Please send text only. Use /admin to return to the panel.")
         return ConversationHandler.END
 
-    users = database.get_all_users()
+    target = context.user_data.get('broadcast_target', 'all')
+
+    if target == 'premium':
+        users = database.get_all_private_channel_members()
+    elif target == 'regular':
+        users = database.get_regular_users()
+    else:
+        users = database.get_all_users()
 
     if not users:
-        await update.message.reply_text("No users found in the database. Use /admin to return to the panel.")
+        await update.message.reply_text("No users found for this target. Use /admin to return to the panel.")
         return ConversationHandler.END
 
-    await update.message.reply_text(f"Starting broadcast to {len(users)} users... This may take a while. I will notify you when it's done.")
+    target_name = "all users"
+    if target == "premium":
+        target_name = "premium members"
+    elif target == "regular":
+        target_name = "regular users"
+
+    await update.message.reply_text(f"Starting broadcast to {len(users)} {target_name}... This may take a while. I will notify you when it's done.")
 
     # Run broadcast in background
     asyncio.create_task(run_broadcast(context.bot, users, message_text, update.message.chat_id))
@@ -499,6 +574,22 @@ async def track_chats_member_updates(update: Update, context: ContextTypes.DEFAU
 
     user_id = result.new_chat_member.user.id
     status = result.new_chat_member.status
+    chat_id = str(result.chat.id)
+
+    # Check for private channel updates
+    private_channel_id = str(database.get_config("PRIVATE_CHANNEL_ID", ""))
+
+    # Sometimes chat IDs can be stored as usernames (e.g. @channel) or numbers
+    # To be safe, we check if either matches
+    private_channel_username = ""
+    if result.chat.username:
+        private_channel_username = f"@{result.chat.username}"
+
+    if private_channel_id and (chat_id == private_channel_id or private_channel_username == private_channel_id):
+        if status in ['member', 'administrator', 'creator', 'restricted']:
+            database.add_private_channel_member(user_id)
+        elif status in ['left', 'kicked']:
+            database.remove_private_channel_member(user_id)
 
     # We only care if they just became a member/restricted (joined)
     if status not in ['member', 'administrator', 'creator', 'restricted']:
@@ -872,7 +963,10 @@ def main() -> None:
             WAITING_FOR_PRIVATE_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_private_channel)],
             WAITING_FOR_REFERRAL_GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_referral_goal)],
             WAITING_FOR_WELCOME_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_welcome_message)],
-            WAITING_FOR_BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_broadcast_message)],
+            WAITING_FOR_BROADCAST_MESSAGE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_broadcast_message),
+                CallbackQueryHandler(admin_button_callback, pattern="^admin_")
+            ],
             WAITING_FOR_QR_CODE: [MessageHandler(filters.PHOTO & ~filters.COMMAND, admin_receive_qr_code)],
         },
         fallbacks=[
